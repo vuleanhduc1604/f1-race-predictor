@@ -177,18 +177,145 @@ To switch back to `ranker` permanently, change `DEFAULT_MODE = "ranker"` in `src
 
 ## Feature groups
 
-| Group | Examples |
+### Grid
+
+| Feature | Description |
 |---|---|
-| Practice pace | `fp2_best_lap_delta`, `fp3_s1_delta`, `fp2_max_speed_i1` |
-| Practice long run | `fp2_long_run_avg`, `fp2_long_run_consistency`, `fp2_avg_deg_rate` |
-| Practice reliability | `fp1_total_laps`, `fp1_reliability_pct` |
-| Qualifying | `q_best_gap`, `q3_gap_to_pole`, `reached_q3`, `reached_q2` |
-| Driver form | `driver_avg_positions_last_5`, `driver_win_rate_last_10` |
-| Team form | `team_avg_positions_last_5`, `team_win_rate_last_10` |
-| Circuit history | `driver_circuit_avg_position`, `driver_circuit_wins` |
-| Championship context | `driver_championship_position`, `points_gap_to_leader` |
-| Within-race relative | `relative_driver_form_5`, `relative_team_form`, `relative_quali_gap` |
-| Grid | `GridPosition` |
+| `GridPosition` | Starting grid position |
+
+### Qualifying
+
+| Feature | Description |
+|---|---|
+| `q_best_gap` | Driver's best qualifying time minus pole time (seconds) |
+| `q3_gap_to_pole` | Q3 time minus pole time; NaN if driver did not reach Q3 |
+| `reached_q3` | Binary: driver competed in Q3 |
+| `reached_q2` | Binary: driver competed in Q2 |
+
+### Practice pace (FP2 / FP3; FP1 for sprint weekends)
+
+| Feature | Description |
+|---|---|
+| `fp2_best_lap_delta` / `fp3_best_lap_delta` | Best lap time minus session best (seconds) |
+| `fp2_best_lap_pct_off` / `fp3_best_lap_pct_off` | Best lap delta as % of session best |
+| `fp2_pb_lap_delta` / `fp3_pb_lap_delta` | Personal-best lap delta vs session best |
+| `fp2_s1_delta` / `fp3_s1_delta` | Best sector 1 time minus field best |
+| `fp2_s2_delta` / `fp3_s2_delta` | Best sector 2 time minus field best |
+| `fp2_s3_delta` / `fp3_s3_delta` | Best sector 3 time minus field best |
+| `fp2_max_speed_i1` / `fp3_max_speed_i1` | Max speed at speed trap 1 (km/h) |
+| `fp2_max_speed_i2` / `fp3_max_speed_i2` | Max speed at speed trap 2 |
+| `fp2_max_speed_st` / `fp3_max_speed_st` | Max speed at start/finish straight |
+| `fp2_max_speed_fl` / `fp3_max_speed_fl` | Max speed at finish line |
+| `fp2_best_soft_delta` / `fp3_best_soft_delta` | Best soft-tyre lap minus field best on softs |
+| `fp2_best_medium_delta` / `fp3_best_medium_delta` | Best medium-tyre lap minus field best on mediums |
+
+### Practice long run (FP1 / FP2)
+
+| Feature | Description |
+|---|---|
+| `fp1_long_run_avg` / `fp2_long_run_avg` | Average lap time across qualifying long-run stints |
+| `fp1_long_run_consistency` / `fp2_long_run_consistency` | Std deviation of long-run lap times |
+| `fp1_avg_deg_rate` / `fp2_avg_deg_rate` | Tyre degradation rate (seconds/lap, from polyfit on tyre life) |
+| `fp1_long_run_delta` / `fp2_long_run_delta` | Long-run average minus field best long-run average |
+
+### Practice reliability (FP1)
+
+| Feature | Description |
+|---|---|
+| `fp1_total_laps` | Total clean laps completed in FP1 |
+| `fp1_reliability_pct` | Driver's lap count divided by the maximum in the session |
+
+### Driver career history
+
+| Feature | Description |
+|---|---|
+| `driver_total_races` | Total career races before this event |
+| `driver_total_points_finishes` | Career number of points-scoring finishes |
+| `driver_avg_finish_position` | Career average finishing position |
+| `driver_avg_grid_position` | Career average starting grid position |
+| `driver_avg_points_per_race` | Career average points scored per race |
+| `driver_dnf_rate` | Career DNF rate |
+| `driver_avg_positions_gained` | Career average grid-to-finish positions gained |
+| `driver_overtake_success_rate` | Fraction of races where driver finished ahead of grid position |
+| `driver_finish_position_stddev` | Std deviation of career finishing positions (consistency) |
+
+### Driver recent form (rolling windows: 5 and 10 races)
+
+| Feature | Description |
+|---|---|
+| `driver_avg_positions_last_5` / `_last_10` | Rolling average finishing position |
+| `driver_total_points_last_5` / `_last_10` | Rolling total points scored |
+| `driver_avg_dnf_rate_last_5` / `_last_10` | Rolling DNF rate |
+| `driver_podium_count_last_5` / `_last_10` | Rolling podium count |
+| `driver_avg_position_gained_last_5` / `_last_10` | Rolling average positions gained from grid |
+
+### Team history
+
+| Feature | Description |
+|---|---|
+| `team_avg_finish_position` | All-time average finish position for the team |
+| `team_avg_points_per_race` | All-time average points per team entry |
+| `team_total_podiums` | All-time podium count |
+| `team_dnf_rate` | All-time DNF rate |
+| `team_recent_avg_position` | Average position over last 10 team entries |
+| `team_recent_total_points` | Total points over last 10 team entries |
+
+### Driver–team synergy
+
+| Feature | Description |
+|---|---|
+| `driver_team_avg_finish_position` | Average finish position for this driver in this team |
+| `driver_team_avg_points_per_race` | Average points in this driver–team combination |
+| `driver_team_dnf_rate` | DNF rate in this driver–team combination |
+| `driver_team_avg_positions_gained` | Average positions gained in this driver–team combination |
+| `driver_team_overtake_success_rate` | Overtake rate in this driver–team combination |
+
+### Circuit characteristics
+
+| Feature | Description |
+|---|---|
+| `circuit_avg_position_changes` | Historical average grid-to-finish position change at this circuit |
+| `circuit_pole_win_rate` | Historical rate of pole position converting to win |
+| `circuit_top3_grid_podium_rate` | Historical rate of top-3 grid positions finishing on the podium |
+| `circuit_grid_position_correlation` | Correlation between grid and finish position (overtaking difficulty) |
+| `circuit_avg_dnf_rate` | Historical DNF rate at this circuit |
+| `circuit_races_in_history` | Number of historical races used to compute circuit stats |
+
+### Driver circuit specialist
+
+| Feature | Description |
+|---|---|
+| `driver_circuit_avg_finish_position` | Driver's average finishing position at this circuit |
+| `driver_circuit_podiums` | Driver's total podiums at this circuit |
+| `driver_circuit_best_position` | Driver's best ever finish at this circuit |
+| `driver_circuit_avg_grid_position` | Driver's average starting position at this circuit |
+| `driver_circuit_avg_positions_gained` | Driver's average positions gained at this circuit |
+| `driver_circuit_overtake_success_rate` | Driver's overtake success rate at this circuit |
+| `driver_circuit_dnf_rate` | Driver's DNF rate at this circuit |
+
+### Championship context
+
+| Feature | Description |
+|---|---|
+| `points_before_race` | Driver's cumulative championship points before this race |
+| `championship_position_before_race` | Driver's championship standing before this race |
+| `points_gap_to_leader_before_race` | Points behind the championship leader |
+| `points_gap_to_next_before_race` | Points behind the driver directly ahead in the standings |
+| `races_since_last_win` | Races elapsed since driver's last victory |
+| `races_since_last_podium` | Races elapsed since driver's last podium |
+| `races_since_last_points_finish` | Races elapsed since driver last scored points |
+| `race_number_in_season` | Sequential race number in the current season |
+
+### Within-race relative features
+
+| Feature | Source feature normalised |
+|---|---|
+| `relative_driver_form_5` | `driver_avg_positions_last_5` minus race-field median |
+| `relative_driver_form_10` | `driver_avg_positions_last_10` minus race-field median |
+| `relative_team_form` | `team_recent_avg_position` minus race-field median |
+| `relative_driver_points_5` | `driver_total_points_last_5` minus race-field median |
+| `relative_driver_points_10` | `driver_total_points_last_10` minus race-field median |
+| `relative_champ_pos` | `championship_position_before_race` minus race-field median |
 
 ---
 
