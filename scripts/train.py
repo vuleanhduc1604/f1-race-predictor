@@ -9,6 +9,7 @@ Usage
     python scripts/train.py --n-trials 100          # more tuning
     python scripts/train.py --skip-tuning           # use default params directly
     python scripts/train.py --force-rebuild         # ignore all caches
+    python scripts/train.py --all-years             # train one leak-free model per year (2019–TEST_YEAR)
 """
 
 from __future__ import annotations
@@ -59,7 +60,58 @@ def parse_args() -> argparse.Namespace:
                    help=f"Hold-out season for evaluation (default: {TEST_YEAR}).")
     p.add_argument("--model-name",  type=str,  default="ranker.pkl",
                    help="Filename to save the trained model under models/.")
+    p.add_argument("--all-years",   action="store_true",
+                   help=(
+                       "Train one model per test year from 2019 to TEST_YEAR, saving each as "
+                       "ranker_test{year}.pkl. Implies --skip-tuning. Use these models in the "
+                       "API to eliminate in-sample data leakage for historical predictions."
+                   ))
     return p.parse_args()
+
+
+def _train_one(args: argparse.Namespace, test_year: int, model_name: str) -> None:
+    """Train and save a single model for *test_year*."""
+    log.info("━━━ Training model for test_year=%d → %s ━━━", test_year, model_name)
+
+    train_data, test_data = build_training_dataset(
+        test_year     = test_year,
+        force_rebuild = args.force_rebuild,
+    )
+
+    drop_cols = get_drop_columns(train_data)
+    X_train   = train_data.drop(columns=[c for c in drop_cols if c in train_data.columns])
+    y_train   = train_data["Position"].astype(float)
+    X_test    = test_data.drop(columns=[c for c in drop_cols if c in test_data.columns])
+    X_test    = X_test.reindex(columns=X_train.columns)
+    y_test    = test_data["Position"].astype(float)
+
+    log.info("Train: %d rows, %d features  |  Test: %d rows",
+             len(X_train), X_train.shape[1], len(X_test))
+
+    if args.skip_tuning or args.all_years:
+        default_params = DEFAULT_REGRESSOR_PARAMS if args.mode == "regressor" else DEFAULT_RANKER_PARAMS
+        best_params = default_params.copy()
+    else:
+        best_params = run_hyperparameter_search(
+            train_data,
+            drop_cols = drop_cols,
+            n_trials  = args.n_trials,
+            mode      = args.mode,
+        )
+
+    ranker = RaceRanker(params=best_params, mode=args.mode)
+    if args.mode == "ranker":
+        ranker.fit(X_train, y_train, get_race_groups(train_data))
+    else:
+        ranker.fit(X_train, y_train)
+
+    if len(X_test):
+        mae = ranker.evaluate(X_test, y_test, test_data["EventName"])
+        log.info("Hold-out MAE (%d season): %.3f positions", test_year, mae)
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    ranker.save(MODELS_DIR / model_name)
+    log.info("Model saved → %s", MODELS_DIR / model_name)
 
 
 def main() -> None:
@@ -71,6 +123,17 @@ def main() -> None:
 
     log.info("Mode: %s", args.mode)
 
+    if args.all_years:
+        # Train one leak-free model per test year: ranker_test2019.pkl … ranker_test2025.pkl
+        years = list(range(2019, TEST_YEAR + 1))
+        log.info("--all-years: training %d models (%d → %d), skip-tuning=True",
+                 len(years), years[0], years[-1])
+        for year in years:
+            _train_one(args, test_year=year, model_name=f"ranker_test{year}.pkl")
+        log.info("All %d models trained successfully.", len(years))
+        return
+
+    # ── Single model (default) ────────────────────────────────────────────
     # ── 1. Build dataset ──────────────────────────────────────────────────
     log.info("Building training dataset …")
     train_data, test_data = build_training_dataset(

@@ -30,6 +30,47 @@ Both models predict finishing positions to within ~2 places on average. The regr
 
 ---
 
+## Web UI
+
+A full-stack web interface is included: a **FastAPI** backend wrapping the ML system, and a **React** frontend.
+
+### Running locally
+
+**1. Install Python dependencies (if you haven't already):**
+```bash
+pip install -r requirements.txt
+```
+
+**2. Start the API (from the project root):**
+```bash
+uvicorn api.main:app --reload --port 8000
+```
+
+The API will be available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+
+**3. Start the frontend (in a separate terminal):**
+```bash
+cd frontend
+npm install   # first time only
+npm run dev
+```
+
+The UI will be available at `http://localhost:5173`.
+
+> **Note:** You must have a trained model at `models/ranker.pkl` before the API can serve predictions. Run `python scripts/train.py` first if you haven't already.
+
+### API endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/years` | List available season years |
+| GET | `/events?year=2025` | List races for a season |
+| GET | `/predict?year=2025&event=Australian Grand Prix` | Predict a race |
+| GET | `/evaluate?year=2025` | Full-season evaluation metrics |
+| GET | `/feature-importance?top_n=25` | Model feature importances |
+
+---
+
 ## Project structure
 
 ```
