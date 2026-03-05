@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from typing import Optional
+
+# Ensure the project root is on sys.path so 'api.*' and 'src.*' absolute
+# imports resolve correctly when Vercel runs this file as the function entry point.
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware

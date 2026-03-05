@@ -21,6 +21,7 @@ Flow
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -46,6 +47,9 @@ from src.utils.helpers import get_drop_columns, is_dnf
 from api.predictor import _load_ranker
 
 log = logging.getLogger(__name__)
+
+# Vercel's deployed filesystem is read-only; use /tmp for the FastF1 HTTP cache.
+_FF1_HTTP_CACHE = "/tmp/fastf1_cache" if os.environ.get("VERCEL") else str(CACHE_DIR)
 
 # ---------------------------------------------------------------------------
 # FastF1 online / offline helpers
@@ -96,7 +100,7 @@ def _fetch_sessions(
     """
     _online()
     try:
-        fastf1.Cache.enable_cache(str(CACHE_DIR))
+        fastf1.Cache.enable_cache(_FF1_HTTP_CACHE)
 
         schedule = fastf1.get_event_schedule(year)
         mask = schedule["EventName"] == event

@@ -6,6 +6,7 @@ returning dicts/lists — no printing, no CLI args.  Used by the FastAPI app.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -24,8 +25,12 @@ from src.utils.helpers import get_drop_columns
 
 log = logging.getLogger(__name__)
 
+# FastF1's HTTP cache needs a writable directory.
+# Vercel's deployed /var/task filesystem is read-only; /tmp is always writable.
+_FF1_HTTP_CACHE = "/tmp/fastf1_cache" if os.environ.get("VERCEL") else str(CACHE_DIR)
+
 # Enable FastF1 cache once at import time (offline mode — no live API calls)
-fastf1.Cache.enable_cache(str(CACHE_DIR))
+fastf1.Cache.enable_cache(_FF1_HTTP_CACHE)
 fastf1.Cache.offline_mode = True
 
 
@@ -118,7 +123,7 @@ def _fetch_schedule_events(year: int) -> list[dict]:
 
     fastf1.Cache.offline_mode = False
     try:
-        fastf1.Cache.enable_cache(str(CACHE_DIR))
+        fastf1.Cache.enable_cache(_FF1_HTTP_CACHE)
         schedule = fastf1.get_event_schedule(year)
         race_events = schedule[schedule["EventFormat"] != "testing"]
         result = []
