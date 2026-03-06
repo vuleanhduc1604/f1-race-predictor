@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://YOUR_BACKEND.vercel.app/:path*"
+      "destination": "https://f1-race-predictor-production.up.railway.app/:path*"
     }
   ]
 }
