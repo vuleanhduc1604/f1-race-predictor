@@ -141,9 +141,9 @@ export default function PredictPage() {
             <div className="bg-yellow-950 border border-yellow-700 text-yellow-300 rounded px-4 py-3 text-sm mb-4 flex gap-2 items-start">
               <span className="font-bold shrink-0">Warning:</span>
               <span>
-                {result.year} was part of the model&apos;s training data (2018–2024).
+                {result.year} was part of the model&apos;s training data (2018–2025).
                 These predictions are <strong>in-sample</strong> — the model has already seen this data
-                and will appear more accurate than on unseen races. Only 2025 predictions are a fair evaluation.
+                and will appear more accurate than on unseen races. Only 2026+ predictions are a fair evaluation.
               </span>
             </div>
           )}

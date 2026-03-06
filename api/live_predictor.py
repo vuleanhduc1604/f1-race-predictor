@@ -526,7 +526,7 @@ def run_live_prediction(year: int, event: str) -> dict:
     return {
         "year":        year,
         "event":       event,
-        "in_sample":   False,
+        "in_sample":   year <= TEST_YEAR,
         "has_actuals": False,
         "mae":         None,
         "drivers":     drivers,
