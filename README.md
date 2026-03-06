@@ -2,6 +2,8 @@
 
 Predicts Formula 1 race finishing positions using LightGBM trained on FastF1 telemetry and timing data from the 2018–2025 seasons.
 
+**Live demo:** [f1-race-predictor-bay.vercel.app](https://f1-race-predictor-bay.vercel.app/)
+
 The default model is an **LGBMRegressor** (matching the original notebook baseline). A **LGBMRanker** (LambdaMART) mode is also available via `--mode ranker` for direct comparison.
 
 ---
@@ -19,7 +21,7 @@ The default model is an **LGBMRegressor** (matching the original notebook baseli
 
 ## Results
 
-Evaluated on the held-out **2025 season** (unseen during training). Lower MAE is better.
+Evaluated on the held-out **2025 season** (model trained on 2018–2024 at the time of evaluation). Lower MAE is better.
 
 | Model | MAE (positions) |
 |---|---|
@@ -28,11 +30,15 @@ Evaluated on the held-out **2025 season** (unseen during training). Lower MAE is
 
 Both models predict finishing positions to within ~2 places on average. The regressor marginally outperforms the ranker on this dataset, which is why it is the default.
 
+> **Current model:** Retrained on the full 2018–2025 dataset. The 2026 season is the new live prediction target.
+
 ---
 
 ## Web UI
 
 A full-stack web interface is included: a **FastAPI** backend wrapping the ML system, and a **React** frontend.
+
+**Live:** [f1-race-predictor-bay.vercel.app](https://f1-race-predictor-bay.vercel.app/) (frontend on Vercel, backend on Railway)
 
 ### Running locally
 
@@ -124,11 +130,11 @@ The three processed feature caches are committed to the repo, so you can train i
 # Train with default regressor params (no Optuna, uses committed caches)
 python scripts/train.py --skip-tuning
 
-# Evaluate on the 2025 hold-out season
+# Evaluate on the 2026 hold-out season
 python scripts/evaluate.py
 
-# Predict the 2025 Australian Grand Prix
-python scripts/predict.py --year 2025 --event "Australian Grand Prix"
+# Predict the 2026 Australian Grand Prix
+python scripts/predict.py --year 2026 --event "Australian Grand Prix"
 ```
 
 ### Full rebuild from FastF1
@@ -170,26 +176,26 @@ python scripts/train.py --help
 | `--n-trials` | `50` | Optuna HPO trials |
 | `--skip-tuning` | off | Use hardcoded default params |
 | `--force-rebuild` | off | Re-extract all features, ignore caches |
-| `--test-year` | `2025` | Hold-out season for evaluation |
+| `--test-year` | `2026` | Hold-out season for evaluation |
 | `--model-name` | `ranker.pkl` | Output filename under `models/` |
 
 ### Predict
 
 ```bash
-# All races in 2025
-python scripts/predict.py --year 2025
+# All races in 2026
+python scripts/predict.py --year 2026
 
 # Single event
-python scripts/predict.py --year 2025 --event "Australian Grand Prix"
+python scripts/predict.py --year 2026 --event "Australian Grand Prix"
 
 # With a non-default model
-python scripts/predict.py --model models/ranker_lambdarank.pkl --year 2025
+python scripts/predict.py --model models/ranker_lambdarank.pkl --year 2026
 ```
 
 ### Evaluate
 
 ```bash
-# Default: evaluates models/ranker.pkl on the 2025 season
+# Default: evaluates models/ranker.pkl on the 2026 season
 python scripts/evaluate.py
 
 # Save plots to models/
@@ -396,13 +402,20 @@ then commit the updated pkl files.
 
 ## Requirements
 
+**Inference / API** (`requirements.txt`):
 ```
 fastf1>=3.8
 lightgbm>=4.0
-optuna>=3.0
 pandas>=2.0
 numpy>=1.24
 scikit-learn>=1.3
+fastapi>=0.110
+uvicorn[standard]>=0.27
+```
+
+**Training / development** (`requirements-dev.txt`, includes all of the above plus):
+```
+optuna>=3.0
 matplotlib>=3.7
 tqdm
 ```

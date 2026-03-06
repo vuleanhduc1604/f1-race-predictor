@@ -177,12 +177,15 @@ def main() -> None:
         ranker.fit(X_train, y_train)
 
     # ── 4. Evaluate on hold-out season ────────────────────────────────────
-    mae = ranker.evaluate(X_test, y_test, test_data["EventName"])
-    log.info("Hold-out MAE (%d season): %.3f positions", args.test_year, mae)
+    if len(X_test):
+        mae = ranker.evaluate(X_test, y_test, test_data["EventName"])
+        log.info("Hold-out MAE (%d season): %.3f positions", args.test_year, mae)
 
-    report = ranker.evaluation_report(test_data, drop_cols=drop_cols)
-    log.info("Per-race MAE (worst 5):\n%s",
-             report.head(5).to_string(index=False))
+        report = ranker.evaluation_report(test_data, drop_cols=drop_cols)
+        log.info("Per-race MAE (worst 5):\n%s",
+                 report.head(5).to_string(index=False))
+    else:
+        log.info("No test data for %d yet — skipping evaluation.", args.test_year)
 
     # ── 5. Save model ─────────────────────────────────────────────────────
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
