@@ -131,7 +131,7 @@ export default function PredictPage() {
               <span className="font-bold shrink-0">Live data:</span>
               <span>
                 Predictions for {result.year} use qualifying and practice session data fetched
-                directly from the FastF1 API. Race results are not used — no data leakage.
+                directly from the FastF1 API.
               </span>
             </div>
           )}
