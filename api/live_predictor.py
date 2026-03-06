@@ -377,7 +377,19 @@ def _build_driver_rows(
 
         rows.append(row)
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    _NUMERIC_CIRCUIT_COLS = [
+        "circuit_avg_position_changes", "circuit_pole_win_rate",
+        "circuit_top3_grid_podium_rate", "circuit_grid_position_correlation",
+        "circuit_avg_dnf_rate",
+        "driver_circuit_avg_finish_position", "driver_circuit_avg_grid_position",
+        "driver_circuit_avg_positions_gained", "driver_circuit_overtake_success_rate",
+        "driver_circuit_dnf_rate",
+    ]
+    for col in _NUMERIC_CIRCUIT_COLS:
+        if col in df.columns:
+            df[col] = df[col].astype("float64")  # None → NaN, object → float64
+    return df
 
 
 def _add_championship_ranks(df: pd.DataFrame) -> pd.DataFrame:
