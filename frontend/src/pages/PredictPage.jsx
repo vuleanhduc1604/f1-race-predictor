@@ -1,5 +1,21 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getYears, getEvents, predict, predictLive } from '../api'
+
+const STAGES = [
+  { at: 5,  label: 'Fetching session data' },
+  { at: 28, label: 'Processing lap times' },
+  { at: 52, label: 'Generating features' },
+  { at: 75, label: 'Running model' },
+  { at: 91, label: 'Finalizing results' },
+]
+
+function stageLabel(p) {
+  let label = STAGES[0].label
+  for (const s of STAGES) {
+    if (p >= s.at) label = s.label
+  }
+  return label
+}
 
 const positionBadge = (pos) => {
   if (pos === 1) return 'bg-yellow-500 text-black'
@@ -16,6 +32,10 @@ export default function PredictPage() {
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [progress, setProgress] = useState(0)
+  const progressTimer = useRef(null)
+
+  useEffect(() => () => clearInterval(progressTimer.current), [])
 
   useEffect(() => {
     getYears().then((y) => {
@@ -53,12 +73,30 @@ export default function PredictPage() {
     setLoading(true)
     setError(null)
     setResult(null)
+    setProgress(0)
+
+    clearInterval(progressTimer.current)
+    progressTimer.current = setInterval(() => {
+      setProgress((prev) => {
+        if (prev < 25) return prev + 0.8
+        if (prev < 50) return prev + 0.4
+        if (prev < 75) return prev + 0.2
+        if (prev < 90) return prev + 0.1
+        if (prev < 99) return prev + 0.04
+        return prev
+      })
+    }, 80)
+
     try {
       const data = selectedYear >= 2025
         ? await predictLive(selectedYear, selectedEvent)
         : await predict(selectedYear, selectedEvent)
+      clearInterval(progressTimer.current)
+      setProgress(100)
       setResult(data)
     } catch (e) {
+      clearInterval(progressTimer.current)
+      setProgress(0)
       setError(e.response?.data?.detail || 'Prediction failed.')
     } finally {
       setLoading(false)
@@ -115,6 +153,19 @@ export default function PredictPage() {
           {loading ? 'Predicting…' : 'Predict'}
         </button>
       </div>
+
+      {/* Progress bar */}
+      {loading && (
+        <div className="mb-6">
+          <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+            <div
+              className="bg-red-600 h-1.5 rounded-full transition-all duration-200 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <p className="text-zinc-400 text-xs mt-2">{stageLabel(progress)}</p>
+        </div>
+      )}
 
       {/* Error */}
       {error && (
