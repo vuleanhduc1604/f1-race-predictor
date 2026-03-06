@@ -56,7 +56,7 @@ export default function PredictPage() {
     setError(null)
     setResult(null)
     try {
-      const data = selectedYear >= 2025
+      const data = selectedYear >= 2026
         ? await predictLive(selectedYear, selectedEvent)
         : await predict(selectedYear, selectedEvent)
       setResult(data)
