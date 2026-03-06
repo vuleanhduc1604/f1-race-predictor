@@ -9,6 +9,8 @@ const positionBadge = (pos) => {
 }
 
 export default function PredictPage() {
+  useEffect(() => { document.title = 'Predict' }, [])
+
   const [years, setYears] = useState([])
   const [events, setEvents] = useState([])
   const [selectedYear, setSelectedYear] = useState('')

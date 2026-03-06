@@ -30,6 +30,8 @@ const CustomTooltip = ({ active, payload }) => {
 }
 
 export default function EvaluatePage() {
+  useEffect(() => { document.title = 'Evaluate' }, [])
+
   const [years, setYears] = useState([])
   const [selectedYear, setSelectedYear] = useState('')
   const [result, setResult] = useState(null)

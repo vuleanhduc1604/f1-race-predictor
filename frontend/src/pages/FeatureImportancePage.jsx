@@ -18,6 +18,8 @@ const CustomTooltip = ({ active, payload }) => {
 }
 
 export default function FeatureImportancePage() {
+  useEffect(() => { document.title = 'Feature Importance' }, [])
+
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)

@@ -12,7 +12,7 @@ export default function Navbar() {
     <nav className="bg-zinc-900 border-b border-zinc-800 sticky top-0 z-50">
       <div className="max-w-6xl mx-auto px-4 flex items-center gap-6 h-14">
         <div className="flex items-center gap-2 mr-4">
-          <span className="text-red-500 font-black text-xl tracking-tight">F1</span>
+          <img src="/favicon.svg" alt="F1" className="w-7 h-7" />
           <span className="text-white font-semibold text-sm">Race Predictor</span>
         </div>
         <NavLink to="/" className={linkClass} end>Predict</NavLink>
