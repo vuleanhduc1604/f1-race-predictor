@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from api.predictor import (
     get_available_years,
@@ -21,7 +22,7 @@ from api.predictor import (
     run_evaluation,
     run_prediction,
 )
-from api.live_predictor import run_live_prediction
+from api.live_predictor import run_live_prediction, run_live_prediction_stream
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,3 +122,16 @@ def predict_live(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/predict-live/stream")
+def predict_live_stream(
+    year: int = Query(..., description="Season year (2026+)"),
+    event: str = Query(..., description="Event name, e.g. 'Australian Grand Prix'"),
+):
+    """Stream prediction progress as Server-Sent Events (SSE)."""
+    return StreamingResponse(
+        run_live_prediction_stream(year, event),
+        media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )

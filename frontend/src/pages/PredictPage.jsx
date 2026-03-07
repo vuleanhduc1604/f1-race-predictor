@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getYears, getEvents, predict, predictLive } from '../api'
+import { getYears, getEvents, predict, predictLiveStream } from '../api'
 
 const positionBadge = (pos) => {
   if (pos === 1) return 'bg-yellow-500 text-black'
@@ -57,11 +57,11 @@ export default function PredictPage() {
     setResult(null)
     try {
       const data = selectedYear >= 2026
-        ? await predictLive(selectedYear, selectedEvent)
+        ? await predictLiveStream(selectedYear, selectedEvent, msg => console.log('[F1 Predictor]', msg))
         : await predict(selectedYear, selectedEvent)
       setResult(data)
     } catch (e) {
-      setError(e.response?.data?.detail || 'Prediction failed.')
+      setError(e.response?.data?.detail || e.message || 'Prediction failed.')
     } finally {
       setLoading(false)
     }

@@ -21,6 +21,7 @@ Flow
 from __future__ import annotations
 
 import logging
+import json as _json
 import os
 import sys
 from pathlib import Path
@@ -411,6 +412,153 @@ def _add_championship_ranks(df: pd.DataFrame) -> pd.DataFrame:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def run_live_prediction_stream(year: int, event: str):
+    """
+    Generator that yields SSE-formatted strings at each prediction step.
+
+    Yields:
+        ``event: progress\\ndata: {"message": "..."}\\n\\n``  for each step
+        ``event: result\\ndata: {...}\\n\\n``                  for the final result
+        ``event: fail\\ndata: {"detail": "..."}\\n\\n``        on error
+    """
+    def _emit(msg: str) -> str:
+        return f"event: progress\ndata: {_json.dumps({'message': msg})}\n\n"
+
+    try:
+        log.info("Live prediction request: %d — %s", year, event)
+
+        # ── 1. Fetch sessions ──────────────────────────────────────────────
+        yield _emit("Fetching qualifying & practice sessions…")
+        quali, fp1, fp2, fp3, is_sprint, event_info = _fetch_sessions(year, event)
+
+        if quali is None:
+            yield (
+                f"event: fail\ndata: {_json.dumps({'detail': f'Qualifying session not available for {year} {event!r}. The session may not have taken place yet.'})}\n\n"
+            )
+            return
+
+        session_names = ["Qualifying"] + [
+            name for name, s in [("FP1", fp1), ("FP2", fp2), ("FP3", fp3)] if s is not None
+        ]
+        yield _emit(f"Sessions loaded: {', '.join(session_names)}.")
+
+        event_date = pd.to_datetime(event_info["EventDate"])
+
+        # ── 2. Load historical features ────────────────────────────────────
+        yield _emit(f"Loading historical data (before {event_date.date()})…")
+        history = _load_history(event_date)
+        yield _emit(f"Historical data loaded ({len(history):,} rows).")
+
+        # ── 3. Build per-driver feature rows ───────────────────────────────
+        yield _emit("Computing per-driver historical features…")
+        target_df = _build_driver_rows(quali, event_info, year, event, history)
+        if target_df.empty:
+            yield (
+                f"event: fail\ndata: {_json.dumps({'detail': f'No drivers found in qualifying results for {year} {event!r}.'})}\n\n"
+            )
+            return
+        yield _emit(f"Historical features built for {len(target_df)} drivers.")
+
+        # ── 4. Championship rank features ──────────────────────────────────
+        target_df = _add_championship_ranks(target_df)
+
+        # ── 5. Qualifying gap features ─────────────────────────────────────
+        yield _emit("Adding qualifying gap features…")
+        qr = pd.DataFrame(quali.results)
+
+        def _td_to_s(series: pd.Series) -> pd.Series:
+            return series.apply(
+                lambda v: v.total_seconds()
+                if pd.notna(v) and hasattr(v, "total_seconds")
+                else np.nan
+            )
+
+        _q_cols = {}
+        for q_col in ("Q1", "Q2", "Q3"):
+            _q_cols[f"{q_col}_s"] = (
+                _td_to_s(qr[q_col]) if q_col in qr.columns
+                else pd.Series(np.nan, index=qr.index)
+            )
+
+        quali_df = pd.DataFrame({
+            "Abbreviation": qr["Abbreviation"],
+            "Year":         year,
+            "EventName":    event,
+            **_q_cols,
+        })
+        target_df = add_qualifying_features(target_df, quali_df)
+
+        # ── 6. Practice features ───────────────────────────────────────────
+        if fp1 is not None:
+            yield _emit("Extracting practice session features…")
+            try:
+                prac_df = (
+                    practiceExtractor(fp1, is_sprint=True)
+                    if is_sprint
+                    else practiceExtractor(fp1, fp2, fp3, is_sprint=False)
+                )
+                if not prac_df.empty:
+                    prac_df["Year"]      = year
+                    prac_df["EventName"] = event
+                    target_df = target_df.merge(
+                        prac_df,
+                        left_on  =["Abbreviation", "Year", "EventName"],
+                        right_on =["Driver",        "Year", "EventName"],
+                        how      ="left",
+                    ).drop(columns=["Driver"], errors="ignore")
+                    yield _emit("Practice features merged.")
+            except Exception as exc:
+                log.warning("Practice feature extraction failed: %s", exc)
+                yield _emit(f"Practice features unavailable ({exc}); using historical features only.")
+        else:
+            yield _emit("No practice sessions available; using historical features only.")
+
+        # ── 7. Within-race relative features ──────────────────────────────
+        yield _emit("Computing relative grid features…")
+        target_df = add_relative_features(target_df)
+
+        # ── 8. Load model and predict ──────────────────────────────────────
+        yield _emit("Running LightGBM model…")
+        ranker     = _load_ranker(year)
+        drop_cols  = get_drop_columns(target_df)
+        X          = target_df.drop(columns=[c for c in drop_cols if c in target_df.columns])
+        if ranker.feature_columns:
+            X = X.reindex(columns=ranker.feature_columns)
+
+        target_df["predicted_position"] = ranker.predict_positions(X, target_df["EventName"])
+        yield _emit(f"Predictions complete for {len(target_df)} drivers.")
+
+        # ── 9. Build response ──────────────────────────────────────────────
+        drivers = []
+        for _, row in target_df.sort_values("predicted_position").iterrows():
+            drivers.append({
+                "abbreviation":      str(row.get("Abbreviation", "")),
+                "full_name":         f"{row.get('FirstName', '')} {row.get('LastName', '')}".strip(),
+                "team":              str(row.get("TeamName", "")),
+                "grid_position":     int(row["GridPosition"]) if pd.notna(row.get("GridPosition")) else None,
+                "predicted_position": int(row["predicted_position"]),
+                "actual_position":   None,
+                "error":             None,
+            })
+
+        result = {
+            "year":        year,
+            "event":       event,
+            "in_sample":   year <= TEST_YEAR,
+            "has_actuals": False,
+            "mae":         None,
+            "drivers":     drivers,
+            "source":      "live",
+        }
+        yield f"event: result\ndata: {_json.dumps(result)}\n\n"
+
+    except ValueError as exc:
+        yield f"event: fail\ndata: {_json.dumps({'detail': str(exc)})}\n\n"
+    except Exception as exc:
+        log.exception("Live prediction stream failed for %d '%s'", year, event)
+        yield f"event: fail\ndata: {_json.dumps({'detail': str(exc)})}\n\n"
+
+
 def run_live_prediction(year: int, event: str) -> dict:
     """
     Generate pre-race predictions for *event* in *year* using live session data.
@@ -423,112 +571,10 @@ def run_live_prediction(year: int, event: str) -> dict:
     Returns the same dict shape as ``run_prediction``, with
     ``"source": "live"`` and ``"has_actuals": False``.
     """
-    log.info("Live prediction request: %d — %s", year, event)
-
-    # ── 1. Fetch sessions ──────────────────────────────────────────────────
-    log.info("Fetching qualifying + practice sessions …")
-    quali, fp1, fp2, fp3, is_sprint, event_info = _fetch_sessions(year, event)
-
-    if quali is None:
-        raise ValueError(
-            f"Qualifying session not available for {year} '{event}'. "
-            "The session may not have taken place yet."
-        )
-
-    event_date = pd.to_datetime(event_info["EventDate"])
-
-    # ── 2. Load historical features ────────────────────────────────────────
-    log.info("Loading history (before %s) …", event_date.date())
-    history = _load_history(event_date)
-    log.info("History rows available: %d", len(history))
-
-    # ── 3. Build per-driver feature rows ───────────────────────────────────
-    log.info("Computing per-driver historical features …")
-    target_df = _build_driver_rows(quali, event_info, year, event, history)
-    if target_df.empty:
-        raise ValueError(f"No drivers found in qualifying results for {year} '{event}'.")
-    log.info("Target rows built: %d drivers", len(target_df))
-
-    # ── 4. Championship rank features ─────────────────────────────────────
-    target_df = _add_championship_ranks(target_df)
-
-    # ── 5. Qualifying gap features ─────────────────────────────────────────
-    qr = pd.DataFrame(quali.results)
-
-    def _td_to_s(series: pd.Series) -> pd.Series:
-        return series.apply(
-            lambda v: v.total_seconds()
-            if pd.notna(v) and hasattr(v, "total_seconds")
-            else np.nan
-        )
-
-    _q_cols = {}
-    for q_col in ("Q1", "Q2", "Q3"):
-        _q_cols[f"{q_col}_s"] = (
-            _td_to_s(qr[q_col]) if q_col in qr.columns
-            else pd.Series(np.nan, index=qr.index)
-        )
-
-    quali_df = pd.DataFrame({
-        "Abbreviation": qr["Abbreviation"],
-        "Year":         year,
-        "EventName":    event,
-        **_q_cols,
-    })
-    target_df = add_qualifying_features(target_df, quali_df)
-
-    # ── 6. Practice features ───────────────────────────────────────────────
-    if fp1 is not None:
-        try:
-            prac_df = (
-                practiceExtractor(fp1, is_sprint=True)
-                if is_sprint
-                else practiceExtractor(fp1, fp2, fp3, is_sprint=False)
-            )
-            if not prac_df.empty:
-                prac_df["Year"]      = year
-                prac_df["EventName"] = event
-                target_df = target_df.merge(
-                    prac_df,
-                    left_on  =["Abbreviation", "Year", "EventName"],
-                    right_on =["Driver",        "Year", "EventName"],
-                    how      ="left",
-                ).drop(columns=["Driver"], errors="ignore")
-                log.info("Practice features merged.")
-        except Exception as exc:
-            log.warning("Practice feature extraction failed: %s", exc)
-
-    # ── 7. Within-race relative features ──────────────────────────────────
-    target_df = add_relative_features(target_df)
-
-    # ── 8. Load model and predict ──────────────────────────────────────────
-    ranker     = _load_ranker(year)
-    drop_cols  = get_drop_columns(target_df)
-    X          = target_df.drop(columns=[c for c in drop_cols if c in target_df.columns])
-    if ranker.feature_columns:
-        X = X.reindex(columns=ranker.feature_columns)
-
-    target_df["predicted_position"] = ranker.predict_positions(X, target_df["EventName"])
-
-    # ── 9. Build response ──────────────────────────────────────────────────
-    drivers = []
-    for _, row in target_df.sort_values("predicted_position").iterrows():
-        drivers.append({
-            "abbreviation":      str(row.get("Abbreviation", "")),
-            "full_name":         f"{row.get('FirstName', '')} {row.get('LastName', '')}".strip(),
-            "team":              str(row.get("TeamName", "")),
-            "grid_position":     int(row["GridPosition"]) if pd.notna(row.get("GridPosition")) else None,
-            "predicted_position": int(row["predicted_position"]),
-            "actual_position":   None,
-            "error":             None,
-        })
-
-    return {
-        "year":        year,
-        "event":       event,
-        "in_sample":   year <= TEST_YEAR,
-        "has_actuals": False,
-        "mae":         None,
-        "drivers":     drivers,
-        "source":      "live",
-    }
+    for chunk in run_live_prediction_stream(year, event):
+        if chunk.startswith("event: result\n"):
+            return _json.loads(chunk.split("\ndata: ", 1)[1].strip())
+        if chunk.startswith("event: fail\n"):
+            detail = _json.loads(chunk.split("\ndata: ", 1)[1].strip())["detail"]
+            raise ValueError(detail)
+    raise ValueError("Prediction stream ended without a result.")
