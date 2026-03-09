@@ -58,15 +58,15 @@ DEFAULT_MODE = "regressor"
 # Default LGBMRegressor hyperparameters (from notebook Optuna tuning)
 # ---------------------------------------------------------------------------
 DEFAULT_REGRESSOR_PARAMS: dict = {
-    "n_estimators":      439,
+    "n_estimators":      461,
     "max_depth":         4,
-    "num_leaves":        29,
-    "learning_rate":     0.011808313796154926,
-    "min_child_samples": 24,
-    "subsample":         0.7232403994453361,
-    "colsample_bytree":  0.8063601537537767,
-    "reg_alpha":         0.004348058550191909,
-    "reg_lambda":        0.00024234756076934005,
+    "num_leaves":        21,
+    "learning_rate":     0.010649053762318842,
+    "min_child_samples": 13,
+    "subsample":         0.9485808150015104,
+    "colsample_bytree":  0.8694628677580424,
+    "reg_alpha":         0.705267156184453,
+    "reg_lambda":        0.0024099824381398805,
     "random_state":      42,
     "verbose":           -1,
 }
@@ -93,36 +93,48 @@ DEFAULT_RANKER_PARAMS: dict = {
 # Feature selection: columns to drop before model training
 # ---------------------------------------------------------------------------
 
-# Metadata / target / leaky columns
+# Metadata / target / leaky columns  (matches notebook drop_columns_v1)
 DROP_METADATA = [
     "DriverNumber", "BroadcastName", "Abbreviation", "FirstName", "LastName",
     "FullName", "HeadshotUrl", "CountryCode", "TeamColor", "EventName",
     "OfficialEventName", "EventFormat", "Country", "Position", "RoundNumber",
     "ClassifiedPosition", "Points", "Time", "Status", "Laps",
-    "Q1", "Q2", "Q3",               # raw timedelta qualy cols (always null in race results)
+    "Q1", "Q2", "Q3",
     "Location", "EventDate", "Year", "TeamName", "DriverId", "TeamId",
     "RaceDateTime",
 ]
 
-# Near-zero importance features identified from notebook analysis
+# Low-importance and high-missing-rate features (matches notebook drop_low_importance)
 DROP_LOW_IMPORTANCE = [
-    "fp1_best_lap_delta", "fp1_best_lap_pct_off", "fp1_pb_lap_delta",
-    "fp1_s1_delta", "fp1_s2_delta", "fp1_max_speed_i2", "fp1_max_speed_fl",
-    "fp1_best_hard_delta", "fp2_pb_lap_delta", "has_sprint",
-    "driver_podium_count_last_5", "driver_circuit_podiums",
+    # Zero importance
+    "fp1_max_speed_fl", "fp1_max_speed_i2", "fp1_best_lap_delta",
+    "fp1_pb_lap_delta", "fp1_best_lap_pct_off", "driver_circuit_podiums",
+    "has_sprint",
+    # Near-zero importance
+    "fp1_s1_delta", "fp1_s2_delta", "fp1_s3_delta",
+    "fp1_best_soft_delta", "fp1_best_medium_delta", "fp1_best_hard_delta",
+    "fp1_max_speed_i1", "fp1_max_speed_st",
     "driver_circuit_best_position",
+    "fp2_pb_lap_delta", "fp2_max_speed_fl",
+    "fp3_max_speed_i1", "fp3_max_speed_fl",
 ]
 
-# Practice features with >80 % NaN rate (add noise rather than signal)
-DROP_HIGH_MISSING = [
-    "fp3_best_hard_delta",   # 96 % NaN
-    "fp1_best_soft_delta",   # 95 % NaN
-    "fp1_best_medium_delta", # 95 % NaN
-    "fp1_max_speed_st",      # 93 % NaN
-    "fp1_max_speed_i1",      # 93 % NaN
-    "fp1_s3_delta",          # 93 % NaN
-    "fp2_best_hard_delta",   # 84 % NaN
-    "fp3_best_medium_delta", # 81 % NaN
+# Historical form features: rolling-window stats and drought counters.
+# These are less reliable after major regulation changes (e.g. 2026) because
+# past performance may not reflect current car/driver competitiveness.
+#
+# To re-enable: remove DROP_HISTORICAL_FORM from get_drop_columns() in helpers.py.
+DROP_HISTORICAL_FORM = [
+    # Rolling averages / sums (last 5 and last 10 races)
+    "driver_avg_positions_last_5",       "driver_avg_positions_last_10",
+    "driver_total_points_last_5",        "driver_total_points_last_10",
+    "driver_avg_dnf_rate_last_5",        "driver_avg_dnf_rate_last_10",
+    "driver_podium_count_last_5",        "driver_podium_count_last_10",
+    "driver_avg_position_gained_last_5", "driver_avg_position_gained_last_10",
+    # Drought counters
+    "races_since_last_win",
+    "races_since_last_podium",
+    "races_since_last_points_finish",
 ]
 
 # Columns added to test_data / training_data at prediction time (not features)

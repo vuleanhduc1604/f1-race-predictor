@@ -8,6 +8,73 @@ const positionBadge = (pos) => {
   return 'bg-zinc-700 text-white'
 }
 
+const formatFeatureVal = (v) => {
+  if (v === null || v === undefined) return '—'
+  if (typeof v === 'number') {
+    if (Number.isInteger(v)) return v.toString()
+    return v.toFixed(3)
+  }
+  return String(v)
+}
+
+function FeaturesTable({ result }) {
+  const drivers = result.drivers
+  const featureNames = result.feature_names || []
+  if (!featureNames.length || !drivers.length) return null
+
+  return (
+    <div className="mt-8">
+      <h3 className="text-base font-semibold text-white mb-3">Engineered Features</h3>
+      <div className="overflow-x-auto rounded-lg border border-zinc-800">
+        <table className="text-xs whitespace-nowrap">
+          <thead>
+            <tr className="bg-zinc-800/80 text-zinc-400 uppercase tracking-wide">
+              <th className="sticky left-0 z-10 bg-zinc-800 text-left px-4 py-2 min-w-64 font-medium">
+                Feature
+              </th>
+              {drivers.map((d) => (
+                <th key={d.abbreviation} className="text-center px-3 py-2 font-medium">
+                  <span className="text-white font-mono">{d.abbreviation}</span>
+                  <span className="block text-zinc-500 normal-case text-xs">
+                    P{d.predicted_position}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {featureNames.map((feat, i) => (
+              <tr
+                key={feat}
+                className={`border-t border-zinc-800 ${
+                  i % 2 === 0 ? 'bg-zinc-900' : 'bg-zinc-900/50'
+                }`}
+              >
+                <td className="sticky left-0 z-10 bg-inherit px-4 py-1.5 text-zinc-300 font-mono">
+                  {feat}
+                </td>
+                {drivers.map((d) => {
+                  const val = d.features?.[feat]
+                  return (
+                    <td
+                      key={d.abbreviation}
+                      className={`text-center px-3 py-1.5 ${
+                        val === null || val === undefined ? 'text-zinc-600' : 'text-zinc-200'
+                      }`}
+                    >
+                      {formatFeatureVal(val)}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export default function PredictPage() {
   useEffect(() => { document.title = 'Predict' }, [])
 
@@ -18,6 +85,7 @@ export default function PredictPage() {
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [showFeatures, setShowFeatures] = useState(false)
 
   useEffect(() => {
     getYears().then((y) => {
@@ -151,11 +219,21 @@ export default function PredictPage() {
             <h2 className="text-lg font-semibold text-white">
               {result.year} {result.event}
             </h2>
-            {result.mae !== null && (
-              <span className="text-sm text-zinc-400">
-                MAE: <span className="text-white font-medium">{result.mae} positions</span>
-              </span>
-            )}
+            <div className="flex items-center gap-4">
+              {result.mae !== null && (
+                <span className="text-sm text-zinc-400">
+                  MAE: <span className="text-white font-medium">{result.mae} positions</span>
+                </span>
+              )}
+              {result.feature_names?.length > 0 && (
+                <button
+                  onClick={() => setShowFeatures((v) => !v)}
+                  className="text-xs bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 px-3 py-1.5 rounded transition-colors"
+                >
+                  {showFeatures ? 'Hide Features' : 'Show Features'}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-zinc-800">
@@ -224,6 +302,8 @@ export default function PredictPage() {
               </tbody>
             </table>
           </div>
+
+          {showFeatures && <FeaturesTable result={result} />}
         </div>
       )}
     </div>

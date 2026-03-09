@@ -26,16 +26,25 @@ def is_dnf(status: str) -> bool:
 
 def get_drop_columns(df: pd.DataFrame, extra: list[str] | None = None) -> list[str]:
     """
-    Return the subset of DROP_METADATA + DROP_LOW_IMPORTANCE + DROP_HIGH_MISSING
-    that actually exist in *df*, plus any *extra* columns supplied by the caller.
+    Return the subset of DROP_METADATA + DROP_LOW_IMPORTANCE + DROP_PREDICTIONS
+    + DROP_HISTORICAL_FORM that actually exist in *df*, plus any *extra* columns
+    supplied by the caller.
+
+    To re-enable rolling and drought features (e.g. after sufficient 2026 data
+    has accumulated), remove DROP_HISTORICAL_FORM from the candidates list below.
     """
-    from src.config import DROP_METADATA, DROP_LOW_IMPORTANCE, DROP_HIGH_MISSING, DROP_PREDICTIONS
+    from src.config import (
+        DROP_METADATA,
+        DROP_LOW_IMPORTANCE,
+        DROP_PREDICTIONS,
+        DROP_HISTORICAL_FORM,  # remove this import + the entry below to re-enable
+    )
 
     candidates = (
         DROP_METADATA
         + DROP_LOW_IMPORTANCE
-        + DROP_HIGH_MISSING
         + DROP_PREDICTIONS
+        # + DROP_HISTORICAL_FORM  # remove this line to re-enable historical form features
         + (extra or [])
     )
     return [c for c in candidates if c in df.columns]

@@ -2,7 +2,7 @@
 Live prediction: fetch qualifying + practice from FastF1 API, build features
 from historical cache, and return predictions without using race results.
 
-Used for 2025+ seasons where we want genuine pre-race predictions based only
+Used for 2026+ seasons where we want genuine pre-race predictions based only
 on session pace data (no leakage from race outcomes).
 
 Flow
@@ -10,12 +10,10 @@ Flow
 1. Fetch qualifying + FP sessions online via FastF1.
 2. Load historical race results from FEATURES_CACHE (rows before target date).
 3. For each driver in the qualifying grid, compute historical features
-   (career, team, circuit) with an efficient O(20 × n) lookup instead of
-   the full O(n²) FeatureExtractor loop.
+   (career, team, circuit) with an efficient O(20 × n) lookup.
 4. Compute rolling form + championship context from history.
 5. Merge qualifying and practice features.
-6. Add within-race relative features.
-7. Predict using the trained model.
+6. Predict using the trained model.
 """
 
 from __future__ import annotations
@@ -36,21 +34,19 @@ from src.config import (
     CACHE_DIR,
     FEATURES_CACHE,
     MIN_CIRCUIT_RACES,
-    MODELS_DIR,
     ROLLING_WINDOWS,
     TEST_YEAR,
 )
 from src.data.extractors import practiceExtractor
-from src.data.features import add_qualifying_features, add_relative_features
+from src.data.features import add_qualifying_features
 from src.utils.helpers import get_drop_columns, is_dnf
 
-# Import _load_ranker from predictor (singleton model cache)
 from api.predictor import _load_ranker
 
 log = logging.getLogger(__name__)
 
-# Vercel's deployed filesystem is read-only; use /tmp for the FastF1 HTTP cache.
 _FF1_HTTP_CACHE = "/tmp/fastf1_cache" if os.environ.get("VERCEL") else str(CACHE_DIR)
+
 
 # ---------------------------------------------------------------------------
 # FastF1 online / offline helpers
@@ -69,11 +65,7 @@ def _offline():
 # ---------------------------------------------------------------------------
 
 def _load_history(before_date: pd.Timestamp) -> pd.DataFrame:
-    """
-    Return all rows from FEATURES_CACHE with EventDate strictly before
-    *before_date*.  The cache contains fully-engineered race result rows
-    (driver/team/circuit features + practice features) for all seasons.
-    """
+    """Return all rows from FEATURES_CACHE with EventDate strictly before *before_date*."""
     if not FEATURES_CACHE.exists():
         raise FileNotFoundError(
             f"Features cache not found at {FEATURES_CACHE}. "
@@ -111,11 +103,15 @@ def _fetch_sessions(
         event_format = event_info.get("EventFormat", "conventional")
         is_sprint = event_format in ("sprint", "sprint_shootout")
 
+        log.info("Event format: %s | is_sprint=%s", event_format, is_sprint)
+
         quali_name = "Sprint Qualifying" if is_sprint else "Qualifying"
         quali = None
         try:
+            log.info("Loading %s session for %d %s …", quali_name, year, event)
             quali = fastf1.get_session(year, event, quali_name)
-            quali.load(laps=False, telemetry=False, weather=False, messages=False)
+            quali.load(laps=True, telemetry=False, weather=False, messages=True)
+            log.info("%s loaded — %d drivers in results", quali_name, len(quali.results))
         except Exception as exc:
             log.warning("Could not load %s: %s", quali_name, exc)
 
@@ -125,13 +121,13 @@ def _fetch_sessions(
             ("Practice 2", "fp2"),
             ("Practice 3", "fp3"),
         ]:
-            if fp_name == "Practice 2" and is_sprint:
-                continue
-            if fp_name == "Practice 3" and is_sprint:
+            if is_sprint and fp_name in ("Practice 2", "Practice 3"):
                 continue
             try:
+                log.info("Loading %s for %d %s …", fp_name, year, event)
                 sess = fastf1.get_session(year, event, fp_name)
                 sess.load(laps=True, telemetry=False, weather=False, messages=False)
+                log.info("%s loaded — %d laps", fp_name, len(sess.laps))
                 if var_name == "fp1":
                     fp1 = sess
                 elif var_name == "fp2":
@@ -148,8 +144,27 @@ def _fetch_sessions(
 
 
 # ---------------------------------------------------------------------------
+# Manual grid position overrides
+# Used for drivers who did not participate in qualifying but have a known
+# starting grid position (e.g. grid penalties, late replacements).
+# ---------------------------------------------------------------------------
+_GRID_POSITION_OVERRIDES: dict[tuple[str, str], float] = {
+    ("Australian Grand Prix", "VER"): 20.0,
+    ("Australian Grand Prix", "SAI"): 21.0,
+    ("Australian Grand Prix", "STR"): 22.0,
+}
+
+# ---------------------------------------------------------------------------
 # Feature builder
 # ---------------------------------------------------------------------------
+
+def _to_float(value) -> float | None:
+    """Convert a value to float, returning None for any NA-like value."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
 
 def _build_driver_rows(
     quali,
@@ -161,6 +176,9 @@ def _build_driver_rows(
     """
     Build one feature row per driver using qualifying results and historical
     statistics looked up from *history*.
+
+    points_before_race is the sum of ALL historical race points (across all
+    seasons), matching the notebook pipeline.
     """
     results = pd.DataFrame(quali.results)
     if results.empty:
@@ -171,7 +189,6 @@ def _build_driver_rows(
     round_num = int(event_info.get("RoundNumber", 0))
     event_date = pd.to_datetime(event_info["EventDate"])
 
-    # Pre-filter history slices for speed
     has_status = "Status" in history.columns
 
     rows = []
@@ -182,7 +199,7 @@ def _build_driver_rows(
 
         team_name = str(dr.get("TeamName", ""))
 
-        # Filtered history slices
+        # History slices
         d_hist  = history[history["Abbreviation"] == abbr].sort_values("EventDate")
         t_hist  = history[history["TeamName"] == team_name].sort_values("EventDate") \
                   if team_name else pd.DataFrame()
@@ -198,7 +215,6 @@ def _build_driver_rows(
         n_dc = len(dc_hist)
 
         row: dict = {
-            # Metadata
             "Year":         year,
             "EventName":    event,
             "EventDate":    event_date,
@@ -212,9 +228,9 @@ def _build_driver_rows(
             "FullName":     str(dr.get("FullName", "")),
             "TeamName":     team_name,
             "TeamColor":    str(dr.get("TeamColor", "")),
-            # Grid position from qualifying Position column
-            "GridPosition": float(dr["Position"]) if pd.notna(dr.get("Position")) else None,
-            # DriverId / TeamId mirror abbreviation / team name (used for internal grouping)
+            "GridPosition": _GRID_POSITION_OVERRIDES.get(
+                (event, abbr), _to_float(dr.get("Position"))
+            ),
             "DriverId":     abbr,
             "TeamId":       team_name,
         }
@@ -338,48 +354,51 @@ def _build_driver_rows(
             last_w = d_hist.tail(w)
             if len(last_w) > 0:
                 lw_is_dnf = last_w["Status"].apply(is_dnf) if has_status else pd.Series(dtype=float)
-                row[f"driver_avg_positions_last_{w}"]     = float(last_w["Position"].mean())
-                row[f"driver_total_points_last_{w}"]      = float(last_w["Points"].sum())
-                row[f"driver_avg_dnf_rate_last_{w}"]      = float(lw_is_dnf.mean()) if has_status else None
-                row[f"driver_podium_count_last_{w}"]      = int((last_w["Position"] <= 3).sum())
+                row[f"driver_avg_positions_last_{w}"]       = float(last_w["Position"].mean())
+                row[f"driver_total_points_last_{w}"]        = float(last_w["Points"].sum())
+                row[f"driver_avg_dnf_rate_last_{w}"]        = float(lw_is_dnf.mean()) if has_status else None
+                row[f"driver_podium_count_last_{w}"]        = int((last_w["Position"] <= 3).sum())
                 row[f"driver_avg_position_gained_last_{w}"] = float((last_w["GridPosition"] - last_w["Position"]).mean())
             else:
-                row[f"driver_avg_positions_last_{w}"]     = None
-                row[f"driver_total_points_last_{w}"]      = None
-                row[f"driver_avg_dnf_rate_last_{w}"]      = None
-                row[f"driver_podium_count_last_{w}"]      = None
+                row[f"driver_avg_positions_last_{w}"]       = None
+                row[f"driver_total_points_last_{w}"]        = None
+                row[f"driver_avg_dnf_rate_last_{w}"]        = None
+                row[f"driver_podium_count_last_{w}"]        = None
                 row[f"driver_avg_position_gained_last_{w}"] = None
 
-        # ── Championship context (cumulative points from all history) ───────
-        row["points_before_race"] = float(d_hist["Points"].sum()) if n_d > 0 else 0.0
+        # ── Championship context (current season only) ─────────────────────
+        d_hist_season = d_hist[d_hist["Year"] == year]
+        row["points_before_race"] = float(d_hist_season["Points"].sum()) if not d_hist_season.empty else 0.0
 
-        # Drought counters (compute from sorted driver history)
+        # ── Drought counters ────────────────────────────────────────────────
         if n_d > 0:
             pos_series = d_hist["Position"]
             wins_at    = pos_series[pos_series == 1]
             podiums_at = pos_series[pos_series <= 3]
             pts_at     = d_hist[d_hist["Points"] > 0]
-            last_idx   = d_hist.index[-1]
 
             def _races_since(subset_df: pd.DataFrame) -> int:
                 if subset_df.empty:
                     return n_d
                 return int((d_hist.index > subset_df.index[-1]).sum())
 
-            row["races_since_last_win"]           = _races_since(wins_at[wins_at.index <= last_idx])
-            row["races_since_last_podium"]        = _races_since(podiums_at[podiums_at.index <= last_idx])
-            row["races_since_last_points_finish"] = _races_since(pts_at[pts_at.index <= last_idx])
+            row["races_since_last_win"]           = _races_since(wins_at)
+            row["races_since_last_podium"]        = _races_since(podiums_at)
+            row["races_since_last_points_finish"] = _races_since(pts_at)
         else:
             row["races_since_last_win"]           = 0
             row["races_since_last_podium"]        = 0
             row["races_since_last_points_finish"] = 0
 
-        row["race_number_in_season"] = 1  # approximate; not critical for prediction
+        # race_number_in_season: use round number as proxy
+        row["race_number_in_season"] = round_num
 
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    _NUMERIC_CIRCUIT_COLS = [
+
+    # Ensure numeric dtypes on circuit/driver-circuit columns that may be object
+    _NUMERIC_COLS = [
         "circuit_avg_position_changes", "circuit_pole_win_rate",
         "circuit_top3_grid_podium_rate", "circuit_grid_position_correlation",
         "circuit_avg_dnf_rate",
@@ -387,24 +406,27 @@ def _build_driver_rows(
         "driver_circuit_avg_positions_gained", "driver_circuit_overtake_success_rate",
         "driver_circuit_dnf_rate",
     ]
-    for col in _NUMERIC_CIRCUIT_COLS:
+    for col in _NUMERIC_COLS:
         if col in df.columns:
-            df[col] = df[col].astype("float64")  # None → NaN, object → float64
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "GridPosition" in df.columns:
+        df["GridPosition"] = pd.to_numeric(df["GridPosition"], errors="coerce")
+
     return df
 
 
 def _add_championship_ranks(df: pd.DataFrame) -> pd.DataFrame:
-    """Derive championship position / gap columns from points_before_race."""
+    """
+    Derive championship position / gap columns from points_before_race.
+    Matches the notebook's FeatureEngineer.add_championship_context() logic
+    applied to a single-event dataframe.
+    """
     df = df.copy()
     pts = df["points_before_race"].fillna(0)
     df["championship_position_before_race"] = pts.rank(ascending=False, method="min")
-    max_pts = pts.max()
-    df["points_gap_to_leader_before_race"]  = max_pts - pts
-    sorted_pts = pts.sort_values(ascending=False).values
-    df["points_gap_to_next_before_race"] = pts.apply(
-        lambda p: float(sorted_pts[sorted_pts > p].min() - p)
-        if (sorted_pts > p).any() else 0.0
-    )
+    df["points_gap_to_leader_before_race"]  = pts.max() - pts
+    pts_sorted = pts.sort_values(ascending=False)
+    df["points_gap_to_next_before_race"] = pts_sorted.diff(-1).fillna(0).reindex(pts.index)
     return df
 
 
@@ -462,7 +484,7 @@ def run_live_prediction_stream(year: int, event: str):
         # ── 4. Championship rank features ──────────────────────────────────
         target_df = _add_championship_ranks(target_df)
 
-        # ── 5. Qualifying gap features ─────────────────────────────────────
+        # ── 5. Qualifying gap features (q3_delta, best_q_delta) ────────────
         yield _emit("Adding qualifying gap features…")
         qr = pd.DataFrame(quali.results)
 
@@ -473,9 +495,9 @@ def run_live_prediction_stream(year: int, event: str):
                 else np.nan
             )
 
-        _q_cols = {}
+        q_cols = {}
         for q_col in ("Q1", "Q2", "Q3"):
-            _q_cols[f"{q_col}_s"] = (
+            q_cols[f"{q_col}_s"] = (
                 _td_to_s(qr[q_col]) if q_col in qr.columns
                 else pd.Series(np.nan, index=qr.index)
             )
@@ -484,7 +506,7 @@ def run_live_prediction_stream(year: int, event: str):
             "Abbreviation": qr["Abbreviation"],
             "Year":         year,
             "EventName":    event,
-            **_q_cols,
+            **q_cols,
         })
         target_df = add_qualifying_features(target_df, quali_df)
 
@@ -513,42 +535,59 @@ def run_live_prediction_stream(year: int, event: str):
         else:
             yield _emit("No practice sessions available; using historical features only.")
 
-        # ── 7. Within-race relative features ──────────────────────────────
-        yield _emit("Computing relative grid features…")
-        target_df = add_relative_features(target_df)
-
-        # ── 8. Load model and predict ──────────────────────────────────────
+        # ── 7. Load model and predict ──────────────────────────────────────
         yield _emit("Running LightGBM model…")
-        ranker     = _load_ranker(year)
-        drop_cols  = get_drop_columns(target_df)
-        X          = target_df.drop(columns=[c for c in drop_cols if c in target_df.columns])
+        ranker    = _load_ranker(year)
+        drop_cols = get_drop_columns(target_df)
+        X         = target_df.drop(columns=[c for c in drop_cols if c in target_df.columns])
         if ranker.feature_columns:
             X = X.reindex(columns=ranker.feature_columns)
 
         target_df["predicted_position"] = ranker.predict_positions(X, target_df["EventName"])
+
+        nan_counts = X.isna().sum()
+        nan_features = nan_counts[nan_counts > 0].sort_values(ascending=False)
+        if not nan_features.empty:
+            log.info("NaN feature counts across all drivers:\n%s", nan_features.to_string())
+
         yield _emit(f"Predictions complete for {len(target_df)} drivers.")
 
-        # ── 9. Build response ──────────────────────────────────────────────
+        # ── 8. Build response ──────────────────────────────────────────────
+        feature_cols = list(X.columns)
+
+        def _serialize_val(v):
+            if pd.isna(v):
+                return None
+            if isinstance(v, (np.integer,)):
+                return int(v)
+            if isinstance(v, (np.floating, float)):
+                return round(float(v), 4)
+            return v
+
         drivers = []
         for _, row in target_df.sort_values("predicted_position").iterrows():
+            x_row = X.loc[row.name]
+            features = {col: _serialize_val(x_row[col]) for col in feature_cols}
             drivers.append({
-                "abbreviation":      str(row.get("Abbreviation", "")),
-                "full_name":         f"{row.get('FirstName', '')} {row.get('LastName', '')}".strip(),
-                "team":              str(row.get("TeamName", "")),
-                "grid_position":     int(row["GridPosition"]) if pd.notna(row.get("GridPosition")) else None,
+                "abbreviation":       str(row.get("Abbreviation", "")),
+                "full_name":          f"{row.get('FirstName', '')} {row.get('LastName', '')}".strip(),
+                "team":               str(row.get("TeamName", "")),
+                "grid_position":      int(row["GridPosition"]) if pd.notna(row.get("GridPosition")) else None,
                 "predicted_position": int(row["predicted_position"]),
-                "actual_position":   None,
-                "error":             None,
+                "actual_position":    None,
+                "error":              None,
+                "features":           features,
             })
 
         result = {
-            "year":        year,
-            "event":       event,
-            "in_sample":   year <= TEST_YEAR,
-            "has_actuals": False,
-            "mae":         None,
-            "drivers":     drivers,
-            "source":      "live",
+            "year":          year,
+            "event":         event,
+            "in_sample":     year <= TEST_YEAR,
+            "has_actuals":   False,
+            "mae":           None,
+            "feature_names": feature_cols,
+            "drivers":       drivers,
+            "source":        "live",
         }
         yield f"event: result\ndata: {_json.dumps(result)}\n\n"
 
@@ -562,14 +601,7 @@ def run_live_prediction_stream(year: int, event: str):
 def run_live_prediction(year: int, event: str) -> dict:
     """
     Generate pre-race predictions for *event* in *year* using live session data.
-
-    Unlike ``run_prediction``, this function:
-    - Fetches qualifying and practice sessions from FastF1 online.
-    - Never reads race results for the target event.
-    - Computes historical features from past races only (no leakage).
-
-    Returns the same dict shape as ``run_prediction``, with
-    ``"source": "live"`` and ``"has_actuals": False``.
+    Returns the same dict shape as ``run_prediction``, with ``"source": "live"``.
     """
     for chunk in run_live_prediction_stream(year, event):
         if chunk.startswith("event: result\n"):

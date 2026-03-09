@@ -10,7 +10,6 @@ FeatureEngineer    – Adds rolling windows and championship context features.
 Standalone helpers
 ------------------
 add_qualifying_features(df, quali_df)  – Merge qualifying gap features.
-add_relative_features(df)              – Add within-race normalised features.
 """
 
 from __future__ import annotations
@@ -189,6 +188,9 @@ class FeatureExtractor:
         print(f"✓ Driver–team synergy features extracted  ({len(df_out)} rows)")
         return df_out
 
+    # Alias used in notebook
+    extract_driver_constructor_synergy = extract_driver_team_synergy
+
     # ------------------------------------------------------------------
     # Circuit features
     # ------------------------------------------------------------------
@@ -284,7 +286,6 @@ class FeatureExtractor:
     def extract_all(self) -> pd.DataFrame:
         """
         Run all extraction steps in order and return the combined DataFrame.
-        Equivalent to calling extract_driver → extract_team → ... in sequence.
         """
         df = self.extract_driver_features()
         df = self.extract_team_features(df)
@@ -314,20 +315,19 @@ class FeatureEngineer:
     def add_rolling_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Per-driver rolling averages for position, points, DNF, podiums, positions gained."""
         df = df.copy().sort_values(["DriverId", "EventDate"])
-        df["_is_dnf"] = df["Status"].apply(is_dnf)
 
         for w in self.windows:
-            grp = df.groupby("DriverId")
-            df[f"driver_avg_positions_last_{w}"] = grp["Position"].transform(
+            df[f"driver_avg_positions_last_{w}"] = df.groupby("DriverId")["Position"].transform(
                 lambda x: x.rolling(w, min_periods=1).mean().shift(1)
             )
-            df[f"driver_total_points_last_{w}"] = grp["Points"].transform(
+            df[f"driver_total_points_last_{w}"] = df.groupby("DriverId")["Points"].transform(
                 lambda x: x.rolling(w, min_periods=1).sum().shift(1)
             )
-            df[f"driver_avg_dnf_rate_last_{w}"] = grp["_is_dnf"].transform(
+            df["is_dnf"] = df["Status"].apply(is_dnf)
+            df[f"driver_avg_dnf_rate_last_{w}"] = df.groupby("DriverId")["is_dnf"].transform(
                 lambda x: x.rolling(w, min_periods=1).mean().shift(1)
             )
-            df[f"driver_podium_count_last_{w}"] = grp["Position"].transform(
+            df[f"driver_podium_count_last_{w}"] = df.groupby("DriverId")["Position"].transform(
                 lambda x: (x <= 3).rolling(w, min_periods=1).sum().shift(1)
             )
             s = df["GridPosition"] - df["Position"]
@@ -335,20 +335,22 @@ class FeatureEngineer:
                 s.groupby(df["DriverId"])
                 .transform(lambda x: x.rolling(w, min_periods=1).mean().shift(1))
             )
+            df.drop(columns=["is_dnf"], inplace=True)
 
-        df.drop(columns=["_is_dnf"], inplace=True)
         return df
 
     def add_championship_context(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Cumulative points / championship position features, all shifted one race
-        to prevent leakage.
+        Cumulative points / championship position features.
+
+        points_before_race is cumulated across ALL seasons per driver (matching
+        the notebook pipeline).
         """
         df = df.copy().sort_values("EventDate")
 
-        # Cumulative points before each race
+        # Cumulative points before each race, reset each season
         df["points_before_race"] = (
-            df.groupby("DriverId")["Points"]
+            df.groupby(["DriverId", "Year"])["Points"]
             .transform(lambda x: x.cumsum().shift(1).fillna(0))
         )
 
@@ -364,27 +366,31 @@ class FeatureEngineer:
             lambda x: x.sort_values(ascending=False).diff(-1).fillna(0)
         )
 
-        # Drought features (races since last win / podium / points)
+        # Drought features (no shift — matches notebook)
         df["races_since_last_win"] = (
             df.groupby("DriverId")["Position"]
-            .transform(lambda x: (x != 1).cumsum()
-                       - (x != 1).cumsum().where(x == 1).ffill().fillna(0))
+            .transform(lambda x: (
+                (x.shift(1) != 1).cumsum()
+                - (x.shift(1) != 1).cumsum().where(x.shift(1) == 1).ffill().fillna(0)
+            ))
         )
         df["races_since_last_podium"] = (
             df.groupby("DriverId")["Position"]
-            .transform(lambda x: (x > 3).cumsum()
-                       - (x > 3).cumsum().where(x <= 3).ffill().fillna(0))
+            .transform(lambda x: (
+                (x.shift(1) > 3).cumsum()
+                - (x.shift(1) > 3).cumsum().where(x.shift(1) <= 3).ffill().fillna(0)
+            ))
         )
         df["races_since_last_points_finish"] = (
             df.groupby("DriverId")["Points"]
-            .transform(lambda x: (x == 0).cumsum()
-                       - (x == 0).cumsum().where(x > 0).ffill().fillna(0))
+            .transform(lambda x: (
+                (x == 0).cumsum()
+                - (x == 0).cumsum().where(x.shift(1) != 0).ffill().fillna(0)
+            ))
         )
 
-        # Race number in season (sequential per driver; used as proxy for tyre/car evolution)
-        df["race_number_in_season"] = (
-            df.groupby(["Year", "EventDate"]).cumcount() + 1
-        )
+        # Race number in season (matches notebook: cumcount within Year+EventDate group)
+        df["race_number_in_season"] = df.groupby(["Year", "EventDate"]).cumcount() + 1
 
         return df
 
@@ -403,92 +409,32 @@ def add_qualifying_features(df: pd.DataFrame, quali_df: pd.DataFrame) -> pd.Data
     """
     Merge qualifying gap features into *df*.
 
+    Computes only q3_delta and best_q_delta, matching the notebook pipeline.
+
     Parameters
     ----------
     df : pd.DataFrame
         Race dataset with columns: Abbreviation, Year, EventName.
     quali_df : pd.DataFrame
-        Output of the qualifying cache with columns:
-        Abbreviation, Year, EventName, Q1_s, Q2_s, Q3_s.
+        Qualifying data with columns: Abbreviation, Year, EventName, Q1_s, Q2_s, Q3_s.
 
     Returns
     -------
-    pd.DataFrame with four new columns:
-        q3_gap_to_pole  – Q3 time minus pole time (NaN if not in Q3)
-        q_best_gap      – Driver's best qualifying time minus pole time
-        reached_q3      – Binary flag: driver participated in Q3
-        reached_q2      – Binary flag: driver participated in Q2
+    pd.DataFrame with two new columns:
+        q3_delta     – Driver Q3 time minus pole Q3 time (NaN if not in Q3)
+        best_q_delta – Driver's best qualifying time minus pole best time
     """
     quali = quali_df.copy()
 
-    def _best_time(row):
-        if pd.notna(row["Q3_s"]): return row["Q3_s"]
-        if pd.notna(row["Q2_s"]): return row["Q2_s"]
-        return row["Q1_s"]
+    # Pole Q3 time per event
+    pole_q3 = quali.groupby(["Year", "EventName"])["Q3_s"].transform("min")
+    quali["q3_delta"] = quali["Q3_s"] - pole_q3
 
-    quali["q_best_time"] = quali.apply(_best_time, axis=1)
+    # Best time across Q1/Q2/Q3 for each driver
+    quali["best_q_s"] = quali[["Q3_s", "Q2_s", "Q1_s"]].min(axis=1)
+    pole_best_q = quali.groupby(["Year", "EventName"])["best_q_s"].transform("min")
+    quali["best_q_delta"] = quali["best_q_s"] - pole_best_q
 
-    pole = (
-        quali.groupby(["Year", "EventName"])["Q3_s"]
-        .min()
-        .rename("q3_pole_time")
-        .reset_index()
-    )
-    quali = quali.merge(pole, on=["Year", "EventName"])
-
-    quali["q3_gap_to_pole"] = np.where(
-        quali["Q3_s"].notna(),
-        quali["Q3_s"] - quali["q3_pole_time"],
-        np.nan,
-    )
-    quali["q_best_gap"] = quali["q_best_time"] - quali["q3_pole_time"]
-    quali["reached_q3"] = quali["Q3_s"].notna().astype(int)
-    quali["reached_q2"] = quali["Q2_s"].notna().astype(int)
-
-    quali_features = quali[
-        ["Abbreviation", "Year", "EventName",
-         "q3_gap_to_pole", "q_best_gap", "reached_q3", "reached_q2"]
-    ]
+    quali_features = quali[["Abbreviation", "Year", "EventName", "q3_delta", "best_q_delta"]]
 
     return df.merge(quali_features, on=["Abbreviation", "Year", "EventName"], how="left")
-
-
-# ---------------------------------------------------------------------------
-# Within-race relative features
-# ---------------------------------------------------------------------------
-
-_RELATIVE_FEATURE_MAP = [
-    ("driver_avg_positions_last_5",           "relative_driver_form_5"),
-    ("driver_avg_positions_last_10",          "relative_driver_form_10"),
-    ("team_recent_avg_position",              "relative_team_form"),
-    ("driver_total_points_last_10",           "relative_driver_points_10"),
-    ("driver_total_points_last_5",            "relative_driver_points_5"),
-    ("championship_position_before_race",     "relative_champ_pos"),
-]
-
-
-def add_relative_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add features that express each driver's metrics relative to the field
-    median in the same race.
-
-    This normalisation gives the model within-race context without introducing
-    any data leakage (the underlying features are already computed from past
-    data only).
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Dataset with Year, EventName, and the source feature columns.
-
-    Returns
-    -------
-    pd.DataFrame with new relative_* columns appended.
-    """
-    df = df.copy()
-    race_key = ["Year", "EventName"]
-    for src_col, new_col in _RELATIVE_FEATURE_MAP:
-        if src_col in df.columns:
-            median_in_race = df.groupby(race_key)[src_col].transform("median")
-            df[new_col]    = df[src_col] - median_in_race
-    return df

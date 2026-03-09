@@ -9,7 +9,7 @@ Usage
     python scripts/train.py --n-trials 100          # more tuning
     python scripts/train.py --skip-tuning           # use default params directly
     python scripts/train.py --force-rebuild         # ignore all caches
-    python scripts/train.py --all-years             # train one leak-free model per year (2019–TEST_YEAR)
+    python scripts/train.py --all-years             # train one leak-free model per year (2019-TEST_YEAR)
 """
 
 from __future__ import annotations

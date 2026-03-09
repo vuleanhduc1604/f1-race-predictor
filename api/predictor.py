@@ -202,8 +202,21 @@ def run_prediction(year: int, event: str) -> dict:
         race["error"] = (race["predicted_position"] - race["actual_position"]).abs()
         mae = float(race["error"].mean())
 
+    feature_cols = list(X.columns)
+
+    def _serialize_val(v):
+        if pd.isna(v):
+            return None
+        if isinstance(v, (np.integer,)):
+            return int(v)
+        if isinstance(v, (np.floating, float)):
+            return round(float(v), 4)
+        return v
+
     drivers = []
     for _, row in race.sort_values("predicted_position").iterrows():
+        x_row = X.loc[row.name]
+        features = {col: _serialize_val(x_row[col]) for col in feature_cols}
         entry: dict = {
             "abbreviation": row.get("Abbreviation", ""),
             "full_name": f"{row.get('FirstName', '')} {row.get('LastName', '')}".strip(),
@@ -212,6 +225,7 @@ def run_prediction(year: int, event: str) -> dict:
             "predicted_position": int(row["predicted_position"]),
             "actual_position": int(row["actual_position"]) if has_actuals else None,
             "error": int(row["error"]) if has_actuals else None,
+            "features": features,
         }
         drivers.append(entry)
 
@@ -221,6 +235,7 @@ def run_prediction(year: int, event: str) -> dict:
         "in_sample": year <= TEST_YEAR,
         "has_actuals": has_actuals,
         "mae": round(mae, 3) if mae is not None else None,
+        "feature_names": feature_cols,
         "drivers": drivers,
     }
 

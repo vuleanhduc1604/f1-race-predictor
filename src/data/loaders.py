@@ -33,8 +33,6 @@ from src.data.extractors import practiceExtractor, qualifyingExtractor
 from src.data.features import (
     FeatureEngineer,
     FeatureExtractor,
-    add_qualifying_features,
-    add_relative_features,
 )
 
 log = logging.getLogger(__name__)
@@ -203,11 +201,14 @@ def load_qualifying_features(
     force: bool = False,
 ) -> pd.DataFrame:
     """
-    Extract Q1 / Q2 / Q3 lap times from qualifying sessions.
+    Extract Q1 / Q2 / Q3 lap times from the Qualifying session for all events.
+
+    Matches the notebook pipeline: always loads 'Qualifying' session and
+    computes only q3_delta and best_q_delta.
 
     Returns
     -------
-    pd.DataFrame with columns: Abbreviation, Year, EventName, Q1_s, Q2_s, Q3_s
+    pd.DataFrame with columns: Abbreviation, Year, EventName, q3_delta, best_q_delta
     """
     years      = years      or TRAINING_YEARS
     cache_path = cache_path or QUALIFYING_CACHE
@@ -225,29 +226,22 @@ def load_qualifying_features(
         race_events = schedule[schedule["EventFormat"] != "testing"]
 
         for _, event in race_events.iterrows():
-            event_name   = event["EventName"]
-            event_format = event["EventFormat"]
-
-            # Sprint weekends have a Sprint Qualifying session instead of Q
-            session_name = (
-                "Sprint Qualifying"
-                if event_format in ("sprint", "sprint_shootout")
-                else "Qualifying"
-            )
+            event_name = event["EventName"]
 
             try:
-                session = fastf1.get_session(year, event_name, session_name)
+                session = fastf1.get_session(year, event_name, "Qualifying")
                 session.load(laps=False, telemetry=False, weather=False, messages=False)
-                df = qualifyingExtractor(session)
-
-                if df.empty:
-                    log.warning("    ✗ %s: no qualifying data", event_name)
-                    continue
-
-                df["Year"]      = year
-                df["EventName"] = event_name
-                all_rows.append(df)
-                log.info("    ✓ %-35s – %d drivers", event_name, len(df))
+                results = session.results[["Abbreviation", "Q1", "Q2", "Q3"]].copy()
+                results["Year"]      = year
+                results["EventName"] = event_name
+                # Convert timedeltas to seconds
+                for col in ["Q1", "Q2", "Q3"]:
+                    results[f"{col}_s"] = results[col].apply(
+                        lambda v: v.total_seconds() if pd.notna(v) and hasattr(v, "total_seconds") else float("nan")
+                    )
+                results.drop(columns=["Q1", "Q2", "Q3"], inplace=True)
+                all_rows.append(results)
+                log.info("    ✓ %-35s – %d drivers", event_name, len(results))
 
             except Exception as exc:
                 log.warning("    ✗ %-35s – %s", event_name, str(exc)[:80])
@@ -256,7 +250,18 @@ def load_qualifying_features(
         log.warning("No qualifying features extracted.")
         return pd.DataFrame()
 
-    result = pd.concat(all_rows, ignore_index=True)
+    quali = pd.concat(all_rows, ignore_index=True)
+
+    # Compute deltas matching the notebook
+    pole_q3 = quali.groupby(["Year", "EventName"])["Q3_s"].transform("min")
+    quali["q3_delta"] = quali["Q3_s"] - pole_q3
+
+    quali["best_q_s"] = quali[["Q3_s", "Q2_s", "Q1_s"]].min(axis=1)
+    pole_best_q = quali.groupby(["Year", "EventName"])["best_q_s"].transform("min")
+    quali["best_q_delta"] = quali["best_q_s"] - pole_best_q
+
+    result = quali[["Abbreviation", "Year", "EventName", "q3_delta", "best_q_delta"]]
+
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     result.to_pickle(cache_path)
     log.info("Saved qualifying features (%s) to %s", result.shape, cache_path)
@@ -343,19 +348,18 @@ def build_training_dataset(
     log.info("Rows after dropping missing positions: %d", len(data))
 
     # ------------------------------------------------------------------
-    # Step 6: Qualifying gap features
+    # Step 6: Qualifying gap features (q3_delta, best_q_delta only)
     # ------------------------------------------------------------------
     quali = load_qualifying_features(years=years, force=force_rebuild)
     if not quali.empty:
-        data = add_qualifying_features(data, quali)
+        data = data.merge(
+            quali,
+            on=["Year", "EventName", "Abbreviation"],
+            how="left",
+        )
 
     # ------------------------------------------------------------------
-    # Step 7: Within-race relative features
-    # ------------------------------------------------------------------
-    data = add_relative_features(data)
-
-    # ------------------------------------------------------------------
-    # Step 8: Sort (required for lambdarank grouping) and split
+    # Step 7: Sort (required for lambdarank grouping) and split
     # ------------------------------------------------------------------
     data = data.sort_values(["EventDate", "EventName"]).reset_index(drop=True)
 
