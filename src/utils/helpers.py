@@ -44,7 +44,6 @@ def get_drop_columns(df: pd.DataFrame, extra: list[str] | None = None) -> list[s
         DROP_METADATA
         + DROP_LOW_IMPORTANCE
         + DROP_PREDICTIONS
-        # + DROP_HISTORICAL_FORM  # remove this line to re-enable historical form features
         + (extra or [])
     )
     return [c for c in candidates if c in df.columns]

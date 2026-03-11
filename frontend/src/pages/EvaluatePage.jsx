@@ -23,7 +23,7 @@ const CustomTooltip = ({ active, payload }) => {
   return (
     <div className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm">
       <p className="text-white font-medium">{d.event.replace(' Grand Prix', ' GP')}</p>
-      <p className="text-zinc-400">MAE: <span className="text-white">{d.mae}</span></p>
+      <p className="text-zinc-400">Median Error: <span className="text-white">{d.median_error}</span></p>
       <p className="text-zinc-400">Drivers: <span className="text-white">{d.drivers}</span></p>
     </div>
   )
@@ -61,8 +61,8 @@ export default function EvaluatePage() {
     }
   }
 
-  const meanMAE = result
-    ? result.per_race.reduce((s, r) => s + r.mae, 0) / result.per_race.length
+  const meanMedian = result
+    ? result.per_race.reduce((s, r) => s + r.median_error, 0) / result.per_race.length
     : 0
 
   return (
@@ -117,20 +117,16 @@ export default function EvaluatePage() {
             </div>
           )}
           {/* Stat cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-            <StatCard label="Overall MAE" value={result.overall_mae} unit="pos" />
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-10">
             <StatCard label="Median Error" value={result.median_error} unit="pos" />
-            <StatCard label="RMSE" value={result.rmse} unit="pos" />
             <StatCard label="Within ±1" value={result.within_1} unit="%" />
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-10">
             <StatCard label="Within ±2" value={result.within_2} unit="%" />
             <StatCard label="Within ±3" value={result.within_3} unit="%" />
             <StatCard label="Within ±5" value={result.within_5} unit="%" />
           </div>
 
           {/* Per-race bar chart */}
-          <h2 className="text-lg font-semibold text-white mb-4">Per-Race MAE</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">Per-Race Median Error</h2>
           <div className="bg-zinc-800/40 rounded-lg border border-zinc-800 p-4">
             <ResponsiveContainer width="100%" height={Math.max(300, result.per_race.length * 22)}>
               <BarChart
@@ -145,7 +141,7 @@ export default function EvaluatePage() {
                   tick={{ fill: '#a1a1aa', fontSize: 11 }}
                   axisLine={{ stroke: '#52525b' }}
                   tickLine={false}
-                  label={{ value: 'MAE (positions)', position: 'insideBottom', offset: -2, fill: '#71717a', fontSize: 11 }}
+                  label={{ value: 'Median Error (positions)', position: 'insideBottom', offset: -2, fill: '#71717a', fontSize: 11 }}
                 />
                 <YAxis
                   type="category"
@@ -158,16 +154,16 @@ export default function EvaluatePage() {
                 />
                 <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
                 <ReferenceLine
-                  x={meanMAE}
+                  x={meanMedian}
                   stroke="#e10600"
                   strokeDasharray="4 3"
-                  label={{ value: `Avg ${meanMAE.toFixed(2)}`, position: 'insideTopRight', fill: '#e10600', fontSize: 11 }}
+                  label={{ value: `Avg ${meanMedian.toFixed(2)}`, position: 'insideTopRight', fill: '#e10600', fontSize: 11 }}
                 />
-                <Bar dataKey="mae" radius={[0, 3, 3, 0]}>
+                <Bar dataKey="median_error" radius={[0, 3, 3, 0]}>
                   {result.per_race.map((entry) => (
                     <Cell
                       key={entry.event}
-                      fill={entry.mae > meanMAE ? '#e10600' : '#3b82f6'}
+                      fill={entry.median_error > meanMedian ? '#e10600' : '#3b82f6'}
                     />
                   ))}
                 </Bar>

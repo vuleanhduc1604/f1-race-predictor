@@ -21,9 +21,9 @@ The default model is an **LGBMRegressor** (matching the original notebook baseli
 
 ## Results
 
-Evaluated on the held-out **2025 season** (model trained on 2018–2024 at the time of evaluation). Lower MAE is better.
+Evaluated on the held-out **2025 season** (model trained on 2018–2024 at the time of evaluation). Lower median error is better.
 
-| Model | MAE (positions) |
+| Model | Median error (positions) |
 |---|---|
 | **LGBMRegressor** (default) | **2.033** |
 | LGBMRanker (LambdaMART) | 2.042 |

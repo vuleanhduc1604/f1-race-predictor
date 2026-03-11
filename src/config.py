@@ -17,7 +17,7 @@ RAW_DATA_DIR    = DATA_DIR / "raw"
 PROCESSED_DIR   = DATA_DIR / "processed"
 
 # FastF1 cache sub-files
-RAW_RESULTS_CACHE  = CACHE_DIR / "raw_results_2018_2025.pkl"
+RAW_RESULTS_CACHE  = CACHE_DIR / "raw_results_2018_2026.pkl"
 PRACTICE_CACHE     = CACHE_DIR / "practice_features.pkl"
 QUALIFYING_CACHE   = CACHE_DIR / "qualifying_results.pkl"
 FEATURES_CACHE     = CACHE_DIR / "data_with_all_features.pkl"
@@ -25,8 +25,8 @@ FEATURES_CACHE     = CACHE_DIR / "data_with_all_features.pkl"
 # ---------------------------------------------------------------------------
 # Data split
 # ---------------------------------------------------------------------------
-TRAINING_YEARS = list(range(2018, 2026))   # 2018–2025 inclusive
-TEST_YEAR      = 2025
+TRAINING_YEARS = list(range(2018, 2027))   # 2018–2026 inclusive
+TEST_YEAR      = 2026
 
 # ---------------------------------------------------------------------------
 # Practice session extraction

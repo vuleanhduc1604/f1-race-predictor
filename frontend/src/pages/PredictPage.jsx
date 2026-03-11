@@ -205,7 +205,7 @@ export default function PredictPage() {
               </span>
             </div>
           )}
-          {result.in_sample && (
+          {result.in_sample && result.source !== 'live' && (
             <div className="bg-yellow-950 border border-yellow-700 text-yellow-300 rounded px-4 py-3 text-sm mb-4 flex gap-2 items-start">
               <span className="font-bold shrink-0">Warning:</span>
               <span>
@@ -220,9 +220,9 @@ export default function PredictPage() {
               {result.year} {result.event}
             </h2>
             <div className="flex items-center gap-4">
-              {result.mae !== null && (
+              {result.median_error !== null && result.median_error !== undefined && (
                 <span className="text-sm text-zinc-400">
-                  MAE: <span className="text-white font-medium">{result.mae} positions</span>
+                  Median Error: <span className="text-white font-medium">{result.median_error} positions</span>
                 </span>
               )}
               {result.feature_names?.length > 0 && (
@@ -243,7 +243,7 @@ export default function PredictPage() {
                   <th className="text-left px-4 py-3">Pred</th>
                   <th className="text-left px-4 py-3">Driver</th>
                   <th className="text-left px-4 py-3">Team</th>
-                  <th className="text-center px-4 py-3">Grid</th>
+                  <th className="text-center px-4 py-3">Starting Position</th>
                   {result.has_actuals && (
                     <>
                       <th className="text-center px-4 py-3">Actual</th>

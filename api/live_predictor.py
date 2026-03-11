@@ -552,6 +552,37 @@ def run_live_prediction_stream(year: int, event: str):
 
         yield _emit(f"Predictions complete for {len(target_df)} drivers.")
 
+        # ── 7.5. Fetch actual race results if the race has finished ────────
+        has_actuals = False
+        median_error = None
+        _online()
+        try:
+            fastf1.Cache.enable_cache(_FF1_HTTP_CACHE)
+            race_sess = fastf1.get_session(year, event, "Race")
+            race_sess.load(laps=False, telemetry=False, weather=False, messages=False)
+            race_results = pd.DataFrame(race_sess.results)
+            if not race_results.empty and "Position" in race_results.columns:
+                race_results["Position"] = pd.to_numeric(race_results["Position"], errors="coerce")
+                valid = race_results[race_results["Position"].notna()]
+                if not valid.empty:
+                    pos_map = valid.set_index("Abbreviation")["Position"].astype(int).to_dict()
+                    target_df["actual_position"] = target_df["Abbreviation"].map(pos_map)
+                    if target_df["actual_position"].notna().any():
+                        target_df["error"] = (
+                            target_df["predicted_position"] - target_df["actual_position"]
+                        ).abs()
+                        has_actuals = True
+                        median_error = round(float(target_df["error"].median()), 3)
+                        yield _emit(f"Actual race results loaded — Median Error: {median_error} positions.")
+        except Exception as exc:
+            log.info("Race results not yet available for %d '%s': %s", year, event, exc)
+        finally:
+            _offline()
+
+        if not has_actuals:
+            target_df["actual_position"] = None
+            target_df["error"] = None
+
         # ── 8. Build response ──────────────────────────────────────────────
         feature_cols = list(X.columns)
 
@@ -574,8 +605,8 @@ def run_live_prediction_stream(year: int, event: str):
                 "team":               str(row.get("TeamName", "")),
                 "grid_position":      int(row["GridPosition"]) if pd.notna(row.get("GridPosition")) else None,
                 "predicted_position": int(row["predicted_position"]),
-                "actual_position":    None,
-                "error":              None,
+                "actual_position":    int(row["actual_position"]) if has_actuals and pd.notna(row.get("actual_position")) else None,
+                "error":              int(row["error"]) if has_actuals and pd.notna(row.get("error")) else None,
                 "features":           features,
             })
 
@@ -583,8 +614,8 @@ def run_live_prediction_stream(year: int, event: str):
             "year":          year,
             "event":         event,
             "in_sample":     year <= TEST_YEAR,
-            "has_actuals":   False,
-            "mae":           None,
+            "has_actuals":   has_actuals,
+            "median_error":  median_error,
             "feature_names": feature_cols,
             "drivers":       drivers,
             "source":        "live",

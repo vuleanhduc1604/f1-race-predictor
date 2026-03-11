@@ -196,11 +196,11 @@ def run_prediction(year: int, event: str) -> dict:
     race["predicted_position"] = ranker.predict_positions(X, race["EventName"])
 
     has_actuals = bool("Position" in race.columns and race["Position"].notna().any())
-    mae = None
+    median_error = None
     if has_actuals:
         race["actual_position"] = race["Position"].astype(int)
         race["error"] = (race["predicted_position"] - race["actual_position"]).abs()
-        mae = float(race["error"].mean())
+        median_error = float(race["error"].median())
 
     feature_cols = list(X.columns)
 
@@ -234,7 +234,7 @@ def run_prediction(year: int, event: str) -> dict:
         "event": event,
         "in_sample": year <= TEST_YEAR,
         "has_actuals": has_actuals,
-        "mae": round(mae, 3) if mae is not None else None,
+        "median_error": round(median_error, 3) if median_error is not None else None,
         "feature_names": feature_cols,
         "drivers": drivers,
     }
@@ -247,14 +247,12 @@ def run_evaluation(year: int) -> dict:
     Returns:
     {
       "year": int,
-      "overall_mae": float,
       "median_error": float,
-      "rmse": float,
       "within_1": float,  # % of predictions within 1 position
       "within_2": float,
       "within_3": float,
       "within_5": float,
-      "per_race": [{"event": str, "drivers": int, "mae": float}, ...]
+      "per_race": [{"event": str, "drivers": int, "median_error": float}, ...]
     }
     """
     ranker = _load_ranker(year)
@@ -275,12 +273,10 @@ def run_evaluation(year: int) -> dict:
     test_data["predicted_position"] = ranker.predict_positions(X, test_data["EventName"])
     errors = (test_data["predicted_position"] - test_data["Position"]).abs()
 
-    # Compute per-race MAE directly from already-predicted data (avoids a second
-    # predict_positions call inside evaluation_report which skips feature alignment)
     test_data["_err"] = errors
     per_race_df = (
         test_data.groupby("EventName")
-        .agg(drivers=("Position", "count"), MAE=("_err", "mean"))
+        .agg(drivers=("Position", "count"), median_error=("_err", "median"))
         .reset_index()
         .sort_values("EventName")
     )
@@ -288,16 +284,14 @@ def run_evaluation(year: int) -> dict:
         {
             "event": row["EventName"],
             "drivers": int(row["drivers"]),
-            "mae": round(float(row["MAE"]), 3),
+            "median_error": round(float(row["median_error"]), 3),
         }
         for _, row in per_race_df.iterrows()
     ]
 
     return {
         "year": year,
-        "overall_mae": round(float(errors.mean()), 3),
         "median_error": round(float(errors.median()), 3),
-        "rmse": round(float(np.sqrt((errors ** 2).mean())), 3),
         "within_1": round(float((errors <= 1).mean() * 100), 1),
         "within_2": round(float((errors <= 2).mean() * 100), 1),
         "within_3": round(float((errors <= 3).mean() * 100), 1),

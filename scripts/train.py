@@ -4,10 +4,10 @@ Train the F1 race-position model.
 
 Usage
 -----
-    python scripts/train.py                         # LGBMRegressor, 50 Optuna trials
+    python scripts/train.py                         # LGBMRegressor, default params (no CV)
+    python scripts/train.py --cv                    # tune hyperparams via leave-one-year-out CV (Optuna)
+    python scripts/train.py --cv --n-trials 100     # more Optuna trials
     python scripts/train.py --mode ranker           # switch to LGBMRanker (LambdaMART)
-    python scripts/train.py --n-trials 100          # more tuning
-    python scripts/train.py --skip-tuning           # use default params directly
     python scripts/train.py --force-rebuild         # ignore all caches
     python scripts/train.py --all-years             # train one leak-free model per year (2019-TEST_YEAR)
 """
@@ -50,10 +50,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode",        type=str,  default=DEFAULT_MODE,
                    choices=["regressor", "ranker"],
                    help="Model type: 'regressor' (default) or 'ranker' (LambdaMART).")
+    p.add_argument("--cv",          action="store_true",
+                   help="Tune hyperparams via leave-one-year-out CV (Optuna). "
+                        "Without this flag the model trains with default params.")
     p.add_argument("--n-trials",    type=int,  default=50,
-                   help="Number of Optuna HPO trials (default: 50).")
-    p.add_argument("--skip-tuning", action="store_true",
-                   help="Skip Optuna and use default params for the chosen mode.")
+                   help="Number of Optuna HPO trials when --cv is set (default: 50).")
     p.add_argument("--force-rebuild", action="store_true",
                    help="Re-extract all features, ignoring existing caches.")
     p.add_argument("--test-year",   type=int,  default=TEST_YEAR,
@@ -63,8 +64,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--all-years",   action="store_true",
                    help=(
                        "Train one model per test year from 2019 to TEST_YEAR, saving each as "
-                       "ranker_test{year}.pkl. Implies --skip-tuning. Use these models in the "
-                       "API to eliminate in-sample data leakage for historical predictions."
+                       "ranker_test{year}.pkl. CV is disabled for this mode. Use these models "
+                       "in the API to eliminate in-sample data leakage for historical predictions."
                    ))
     return p.parse_args()
 
@@ -88,16 +89,16 @@ def _train_one(args: argparse.Namespace, test_year: int, model_name: str) -> Non
     log.info("Train: %d rows, %d features  |  Test: %d rows",
              len(X_train), X_train.shape[1], len(X_test))
 
-    if args.skip_tuning or args.all_years:
-        default_params = DEFAULT_REGRESSOR_PARAMS if args.mode == "regressor" else DEFAULT_RANKER_PARAMS
-        best_params = default_params.copy()
-    else:
+    if args.cv and not args.all_years:
         best_params = run_hyperparameter_search(
             train_data,
             drop_cols = drop_cols,
             n_trials  = args.n_trials,
             mode      = args.mode,
         )
+    else:
+        default_params = DEFAULT_REGRESSOR_PARAMS if args.mode == "regressor" else DEFAULT_RANKER_PARAMS
+        best_params = default_params.copy()
 
     ranker = RaceRanker(params=best_params, mode=args.mode)
     if args.mode == "ranker":
@@ -126,7 +127,7 @@ def main() -> None:
     if args.all_years:
         # Train one leak-free model per test year: ranker_test2019.pkl … ranker_test2025.pkl
         years = list(range(2019, TEST_YEAR + 1))
-        log.info("--all-years: training %d models (%d → %d), skip-tuning=True",
+        log.info("--all-years: training %d models (%d → %d), CV disabled",
                  len(years), years[0], years[-1])
         for year in years:
             _train_one(args, test_year=year, model_name=f"ranker_test{year}.pkl")
@@ -153,18 +154,19 @@ def main() -> None:
              len(X_train), X_train.shape[1], len(X_test))
 
     # ── 2. Hyperparameter tuning ──────────────────────────────────────────
-    if args.skip_tuning:
-        default_params = DEFAULT_REGRESSOR_PARAMS if args.mode == "regressor" else DEFAULT_RANKER_PARAMS
-        log.info("Skipping Optuna; using default params for mode=%s.", args.mode)
-        best_params = default_params.copy()
-    else:
-        log.info("Running Optuna HPO (%d trials, mode=%s) …", args.n_trials, args.mode)
+    if args.cv:
+        log.info("Running Optuna HPO with leave-one-year-out CV (%d trials, mode=%s) …",
+                 args.n_trials, args.mode)
         best_params = run_hyperparameter_search(
             train_data,
             drop_cols = drop_cols,
             n_trials  = args.n_trials,
             mode      = args.mode,
         )
+    else:
+        default_params = DEFAULT_REGRESSOR_PARAMS if args.mode == "regressor" else DEFAULT_RANKER_PARAMS
+        log.info("Using default params for mode=%s (pass --cv to tune via Optuna).", args.mode)
+        best_params = default_params.copy()
 
     # ── 3. Train final model ──────────────────────────────────────────────
     log.info("Training final RaceRanker (mode=%s) …", args.mode)
