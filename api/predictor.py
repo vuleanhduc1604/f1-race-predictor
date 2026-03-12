@@ -162,8 +162,14 @@ def get_events(year: int) -> list[dict]:
     Each item: {"round": int, "name": str, "country": str, "date": str}
 
     For historical years (in FEATURES_CACHE) the data comes from the local
-    pickle.  For future years (e.g. 2026) the F1 calendar is fetched online.
+    pickle.  For the current/live year (TEST_YEAR+) the full F1 calendar is
+    always fetched online so upcoming races appear in the dropdown.
     """
+    # Always use the live schedule for the current year — the features cache
+    # only contains completed races, so it would hide upcoming rounds.
+    if year >= TEST_YEAR:
+        return _fetch_schedule_events(year)
+
     # Try local cache first
     if FEATURES_CACHE.exists():
         df = pd.read_pickle(FEATURES_CACHE)
@@ -185,7 +191,7 @@ def get_events(year: int) -> list[dict]:
                 })
             return result
 
-    # Fall back to live schedule (for 2026+ or missing cache years)
+    # Fall back to live schedule for historical years missing from cache
     log.info("Year %d not in features cache — fetching schedule online …", year)
     return _fetch_schedule_events(year)
 
