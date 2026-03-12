@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getYears, getEvents, predict, predictLiveStream } from '../api'
+import { getYears, getEvents, predictLiveStream } from '../api'
 
 const positionBadge = (pos) => {
   if (pos === 1) return 'bg-yellow-500 text-black'
@@ -126,12 +126,10 @@ export default function PredictPage() {
     setResult(null)
     setProgressMessages([])
     try {
-      const data = selectedYear >= 2026
-        ? await predictLiveStream(selectedYear, selectedEvent, msg => {
-            console.log('[F1 Predictor]', msg)
-            setProgressMessages(prev => [...prev, msg])
-          })
-        : await predict(selectedYear, selectedEvent)
+      const data = await predictLiveStream(selectedYear, selectedEvent, msg => {
+        console.log('[F1 Predictor]', msg)
+        setProgressMessages(prev => [...prev, msg])
+      })
       setResult(data)
     } catch (e) {
       setError(e.response?.data?.detail || e.message || 'Prediction failed.')
@@ -225,7 +223,7 @@ export default function PredictPage() {
       {/* Results */}
       {result && (
         <div>
-          {result.source === 'live' && (
+          {result.year >= 2026 && (
             <div className="bg-green-950 border border-green-700 text-green-300 rounded px-4 py-3 text-sm mb-4 flex gap-2 items-start">
               <span className="font-bold shrink-0">Live data:</span>
               <span>
@@ -243,7 +241,7 @@ export default function PredictPage() {
               </span>
             </div>
           )}
-          {result.in_sample && result.source !== 'live' && (
+          {result.year < 2026 && (result.training_cutoff ? result.training_cutoff.year >= result.year : result.in_sample) && (
             <div className="bg-yellow-950 border border-yellow-700 text-yellow-300 rounded px-4 py-3 text-sm mb-4 flex gap-2 items-start">
               <span className="font-bold shrink-0">Warning:</span>
               <span>

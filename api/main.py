@@ -20,9 +20,8 @@ from api.predictor import (
     get_events,
     get_feature_importance,
     run_evaluation,
-    run_prediction,
 )
-from api.live_predictor import run_live_prediction, run_live_prediction_stream
+from api.live_predictor import run_live_prediction_stream
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,15 +69,12 @@ def predict(
     year: int = Query(..., description="Season year"),
     event: str = Query(..., description="Event name, e.g. 'Australian Grand Prix'"),
 ):
-    """Predict finishing positions for a specific race."""
-    try:
-        return run_prediction(year, event)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Stream prediction progress as Server-Sent Events (SSE) for any year."""
+    return StreamingResponse(
+        run_live_prediction_stream(year, event),
+        media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/evaluate")
@@ -103,35 +99,3 @@ def feature_importance(top_n: int = Query(25, description="Number of top feature
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/predict-live")
-def predict_live(
-    year: int = Query(..., description="Season year (2025+)"),
-    event: str = Query(..., description="Event name, e.g. 'Australian Grand Prix'"),
-):
-    """
-    Predict finishing positions using live qualifying and practice data fetched
-    from the FastF1 API.  No race results are used — leakage-free for 2025+.
-    """
-    try:
-        return run_live_prediction(year, event)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/predict-live/stream")
-def predict_live_stream(
-    year: int = Query(..., description="Season year (2026+)"),
-    event: str = Query(..., description="Event name, e.g. 'Australian Grand Prix'"),
-):
-    """Stream prediction progress as Server-Sent Events (SSE)."""
-    return StreamingResponse(
-        run_live_prediction_stream(year, event),
-        media_type="text/event-stream",
-        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
-    )

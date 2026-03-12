@@ -428,12 +428,12 @@ def add_qualifying_features(df: pd.DataFrame, quali_df: pd.DataFrame) -> pd.Data
 
     # Pole Q3 time per event
     pole_q3 = quali.groupby(["Year", "EventName"])["Q3_s"].transform("min")
-    quali["q3_delta"] = quali["Q3_s"] - pole_q3
+    quali["q3_delta"] = pd.to_numeric(quali["Q3_s"] - pole_q3, errors="coerce")
 
     # Best time across Q1/Q2/Q3 for each driver
     quali["best_q_s"] = quali[["Q3_s", "Q2_s", "Q1_s"]].min(axis=1)
     pole_best_q = quali.groupby(["Year", "EventName"])["best_q_s"].transform("min")
-    quali["best_q_delta"] = quali["best_q_s"] - pole_best_q
+    quali["best_q_delta"] = pd.to_numeric(quali["best_q_s"] - pole_best_q, errors="coerce")
 
     quali_features = quali[["Abbreviation", "Year", "EventName", "q3_delta", "best_q_delta"]]
 

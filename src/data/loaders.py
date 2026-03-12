@@ -254,11 +254,11 @@ def load_qualifying_features(
 
     # Compute deltas matching the notebook
     pole_q3 = quali.groupby(["Year", "EventName"])["Q3_s"].transform("min")
-    quali["q3_delta"] = quali["Q3_s"] - pole_q3
+    quali["q3_delta"] = pd.to_numeric(quali["Q3_s"] - pole_q3, errors="coerce")
 
     quali["best_q_s"] = quali[["Q3_s", "Q2_s", "Q1_s"]].min(axis=1)
     pole_best_q = quali.groupby(["Year", "EventName"])["best_q_s"].transform("min")
-    quali["best_q_delta"] = quali["best_q_s"] - pole_best_q
+    quali["best_q_delta"] = pd.to_numeric(quali["best_q_s"] - pole_best_q, errors="coerce")
 
     result = quali[["Abbreviation", "Year", "EventName", "q3_delta", "best_q_delta"]]
 
@@ -354,14 +354,16 @@ def build_training_dataset(
 
     # ------------------------------------------------------------------
     # Step 6: Qualifying gap features (q3_delta, best_q_delta only)
+    # Skip if already present in the loaded features cache.
     # ------------------------------------------------------------------
-    quali = load_qualifying_features(years=years, force=force_rebuild)
-    if not quali.empty:
-        data = data.merge(
-            quali,
-            on=["Year", "EventName", "Abbreviation"],
-            how="left",
-        )
+    if "q3_delta" not in data.columns:
+        quali = load_qualifying_features(years=years, force=force_rebuild)
+        if not quali.empty:
+            data = data.merge(
+                quali,
+                on=["Year", "EventName", "Abbreviation"],
+                how="left",
+            )
 
     # ------------------------------------------------------------------
     # Step 7: Sort (required for lambdarank grouping) and split

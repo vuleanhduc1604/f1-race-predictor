@@ -228,6 +228,10 @@ def run_prediction(year: int, event: str) -> dict:
     if ranker.feature_columns:
         X = X.reindex(columns=ranker.feature_columns)
 
+    # Coerce any object-dtype columns that should be numeric (e.g. q3_delta, best_q_delta)
+    for col in X.select_dtypes(include="object").columns:
+        X[col] = pd.to_numeric(X[col], errors="coerce")
+
     race["predicted_position"] = ranker.predict_positions(X, race["EventName"])
 
     has_actuals = bool("Position" in race.columns and race["Position"].notna().any())
