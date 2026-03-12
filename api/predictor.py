@@ -5,6 +5,7 @@ returning dicts/lists — no printing, no CLI args.  Used by the FastAPI app.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -43,29 +44,54 @@ _dataset_cache: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
 _schedule_cache: dict[int, list[dict]] = {}  # keyed by year
 
 
-def _load_ranker(year: int | None = None) -> RaceRanker:
+def _load_ranker(year: int | None = None, round_number: int | None = None) -> RaceRanker:
     """
-    Return the model for prediction.
+    Return the model for *year* / *round_number*.
 
-    All years use ranker_2026.pkl (trained on 2018–2025).
-    Years 2018–2025 are in-sample; 2026+ are out-of-sample.
-    Falls back to ranker.pkl if ranker_2026.pkl is not found.
+    Resolution order:
+      1. ranker_{year}_R{round:02d}.pkl  – round-specific (post-race pipeline)
+      2. ranker_{year}.pkl               – year-specific
+      3. ranker_2026.pkl                 – general 2026 model
+      4. ranker.pkl                      – fallback
     """
-    path = MODELS_DIR / "ranker_2026.pkl"
-    cache_key: int | str = "2026"
-    if not path.exists():
-        log.warning("ranker_2026.pkl not found — falling back to ranker.pkl")
-        path = MODELS_DIR / "ranker.pkl"
-        cache_key = "default"
+    candidates: list[tuple[str, Path]] = []
+    if year is not None and round_number is not None:
+        name = f"ranker_{year}_R{round_number:02d}.pkl"
+        candidates.append((name, MODELS_DIR / name))
+    if year is not None:
+        name = f"ranker_{year}.pkl"
+        candidates.append((name, MODELS_DIR / name))
+    candidates.append(("ranker_2026.pkl", MODELS_DIR / "ranker_2026.pkl"))
+    candidates.append(("ranker.pkl",      MODELS_DIR / "ranker.pkl"))
 
-    if cache_key not in _ranker_cache:
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Model not found at {path}. Run scripts/train.py first."
-            )
-        log.info("Loading model from %s …", path)
-        _ranker_cache[cache_key] = RaceRanker.load(path)
-    return _ranker_cache[cache_key]
+    for cache_key, path in candidates:
+        if path.exists():
+            if cache_key not in _ranker_cache:
+                log.info("Loading model from %s …", path)
+                _ranker_cache[cache_key] = RaceRanker.load(path)
+            return _ranker_cache[cache_key]
+
+    raise FileNotFoundError(
+        f"No model found for year={year}, round={round_number}. "
+        "Run scripts/train.py first."
+    )
+
+
+def _load_model_meta(year: int | None = None, round_number: int | None = None) -> dict | None:
+    """Load the training metadata JSON sidecar for the active model, or None if not found."""
+    candidates: list[Path] = []
+    if year is not None and round_number is not None:
+        candidates.append(MODELS_DIR / f"ranker_{year}_R{round_number:02d}_meta.json")
+    if year is not None:
+        candidates.append(MODELS_DIR / f"ranker_{year}_meta.json")
+    candidates.append(MODELS_DIR / "ranker_2026_meta.json")
+    candidates.append(MODELS_DIR / "ranker_meta.json")
+
+    for path in candidates:
+        if path.exists():
+            with open(path) as fh:
+                return json.load(fh)
+    return None
 
 
 def _load_dataset(year: int) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -181,12 +207,15 @@ def run_prediction(year: int, event: str) -> dict:
       ]
     }
     """
-    ranker = _load_ranker(year)
     _, pred_data = _load_dataset(year)
 
     race = pred_data[pred_data["EventName"] == event].copy()
     if race.empty:
         raise ValueError(f"No data found for event '{event}' in {year}.")
+
+    round_number = int(race["RoundNumber"].iloc[0]) if "RoundNumber" in race.columns else None
+    ranker = _load_ranker(year, round_number=round_number)
+    meta   = _load_model_meta(year, round_number=round_number)
 
     drop_cols = get_drop_columns(race)
     X = race.drop(columns=[c for c in drop_cols if c in race.columns])
@@ -236,6 +265,7 @@ def run_prediction(year: int, event: str) -> dict:
         "has_actuals": has_actuals,
         "median_error": round(median_error, 3) if median_error is not None else None,
         "feature_names": feature_cols,
+        "training_cutoff": meta.get("training_cutoff") if meta else None,
         "drivers": drivers,
     }
 

@@ -201,7 +201,16 @@ export default function PredictPage() {
               <span className="font-bold shrink-0">Live data:</span>
               <span>
                 Predictions for {result.year} use qualifying and practice session data fetched
-                directly from the FastF1 API.
+                directly from the FastF1 API.{' '}
+                {result.training_cutoff ? (
+                  result.training_cutoff.year >= result.year ? (
+                    <>Model trained through <strong>{result.training_cutoff.event} {result.training_cutoff.year}</strong> (Round {result.training_cutoff.round}).</>
+                  ) : (
+                    <>Model trained on 2018–{result.training_cutoff.year} data only — no {result.year} races in training.</>
+                  )
+                ) : (
+                  <>Training data: 2018–2025.</>
+                )}
               </span>
             </div>
           )}
@@ -209,7 +218,7 @@ export default function PredictPage() {
             <div className="bg-yellow-950 border border-yellow-700 text-yellow-300 rounded px-4 py-3 text-sm mb-4 flex gap-2 items-start">
               <span className="font-bold shrink-0">Warning:</span>
               <span>
-                {result.year} was part of the model&apos;s training data (2018–2025).
+                {result.year} was part of the model&apos;s training data (2018–{result.training_cutoff?.year ?? 2025}).
                 These predictions are <strong>in-sample</strong> — the model has already seen this data
                 and will appear more accurate than on unseen races. Only 2026+ predictions are a fair evaluation.
               </span>

@@ -15,8 +15,10 @@ Usage
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Ensure the project root is on sys.path when run as a script
@@ -70,6 +72,41 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _save_model_meta(
+    model_name: str,
+    test_year: int,
+    train_data,
+    test_round: int | None = None,
+    test_event: str | None = None,
+) -> None:
+    """Save a JSON metadata sidecar next to the model pickle."""
+    import pandas as pd
+
+    meta: dict = {
+        "test_year":       test_year,
+        "test_round":      test_round,
+        "test_event":      test_event,
+        "n_training_rows": int(len(train_data)),
+        "trained_at":      datetime.now(timezone.utc).isoformat(),
+    }
+
+    if len(train_data):
+        last = train_data.sort_values("EventDate").iloc[-1]
+        meta["training_cutoff"] = {
+            "year":  int(last["Year"]),
+            "round": int(last["RoundNumber"]),
+            "event": str(last["EventName"]),
+            "date":  str(pd.to_datetime(last["EventDate"]).date()),
+        }
+    else:
+        meta["training_cutoff"] = None
+
+    meta_path = MODELS_DIR / model_name.replace(".pkl", "_meta.json")
+    with open(meta_path, "w") as fh:
+        json.dump(meta, fh, indent=2)
+    log.info("Metadata saved → %s", meta_path)
+
+
 def _train_one(args: argparse.Namespace, test_year: int, model_name: str) -> None:
     """Train and save a single model for *test_year*."""
     log.info("━━━ Training model for test_year=%d → %s ━━━", test_year, model_name)
@@ -113,6 +150,8 @@ def _train_one(args: argparse.Namespace, test_year: int, model_name: str) -> Non
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     ranker.save(MODELS_DIR / model_name)
     log.info("Model saved → %s", MODELS_DIR / model_name)
+
+    _save_model_meta(model_name, test_year=test_year, train_data=train_data)
 
 
 def main() -> None:
@@ -194,6 +233,8 @@ def main() -> None:
     model_path = MODELS_DIR / args.model_name
     ranker.save(model_path)
     log.info("Model saved → %s", model_path)
+
+    _save_model_meta(args.model_name, test_year=args.test_year, train_data=train_data)
 
     # ── 6. Feature importance summary ────────────────────────────────────
     top10 = ranker.feature_importances.head(10)

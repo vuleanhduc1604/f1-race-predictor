@@ -41,7 +41,7 @@ from src.data.extractors import practiceExtractor
 from src.data.features import add_qualifying_features
 from src.utils.helpers import get_drop_columns, is_dnf
 
-from api.predictor import _load_ranker
+from api.predictor import _load_model_meta, _load_ranker
 
 log = logging.getLogger(__name__)
 
@@ -537,7 +537,9 @@ def run_live_prediction_stream(year: int, event: str):
 
         # ── 7. Load model and predict ──────────────────────────────────────
         yield _emit("Running LightGBM model…")
-        ranker    = _load_ranker(year)
+        _round_num = int(event_info.get("RoundNumber", 0)) or None
+        ranker     = _load_ranker(year, round_number=_round_num)
+        _meta      = _load_model_meta(year, round_number=_round_num)
         drop_cols = get_drop_columns(target_df)
         X         = target_df.drop(columns=[c for c in drop_cols if c in target_df.columns])
         if ranker.feature_columns:
@@ -611,14 +613,15 @@ def run_live_prediction_stream(year: int, event: str):
             })
 
         result = {
-            "year":          year,
-            "event":         event,
-            "in_sample":     year <= TEST_YEAR,
-            "has_actuals":   has_actuals,
-            "median_error":  median_error,
-            "feature_names": feature_cols,
-            "drivers":       drivers,
-            "source":        "live",
+            "year":             year,
+            "event":            event,
+            "in_sample":        year <= TEST_YEAR,
+            "has_actuals":      has_actuals,
+            "median_error":     median_error,
+            "feature_names":    feature_cols,
+            "training_cutoff":  _meta.get("training_cutoff") if _meta else None,
+            "drivers":          drivers,
+            "source":           "live",
         }
         yield f"event: result\ndata: {_json.dumps(result)}\n\n"
 

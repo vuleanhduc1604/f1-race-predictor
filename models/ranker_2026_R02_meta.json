@@ -1,0 +1,12 @@
+{
+  "test_year": 2026,
+  "test_round": 2,
+  "n_training_rows": 3477,
+  "trained_at": "2026-03-12T02:39:00.758823+00:00",
+  "training_cutoff": {
+    "year": 2026,
+    "round": 1,
+    "event": "Australian Grand Prix",
+    "date": "2026-03-08"
+  }
+}

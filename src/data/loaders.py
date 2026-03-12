@@ -275,6 +275,7 @@ def load_qualifying_features(
 def build_training_dataset(
     years: list[int] | None = None,
     test_year: int | None  = None,
+    test_round: int | None = None,
     force_rebuild: bool    = False,
     rolling_windows: list[int] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -291,6 +292,10 @@ def build_training_dataset(
     ----------
     years          : Seasons to include.  Defaults to TRAINING_YEARS.
     test_year      : The hold-out season.  Defaults to TEST_YEAR.
+    test_round     : If provided, split at the round level instead of year
+                     level.  Train = all races with EventDate strictly before
+                     the target round's date; test = that single round only.
+                     When None the existing year-only split is used.
     force_rebuild  : Re-run all feature extraction ignoring caches.
     rolling_windows: Override default rolling window sizes.
 
@@ -363,8 +368,31 @@ def build_training_dataset(
     # ------------------------------------------------------------------
     data = data.sort_values(["EventDate", "EventName"]).reset_index(drop=True)
 
-    train = data[data["Year"] <  test_year].copy()
-    test  = data[data["Year"] == test_year].copy()
+    if test_round is not None:
+        test_mask = (
+            (data["Year"] == test_year) & (data["RoundNumber"] == test_round)
+        )
+        if test_mask.any():
+            # Target round is in cache — use it as test set for evaluation
+            target_date = data.loc[test_mask, "EventDate"].iloc[0]
+            train = data[data["EventDate"] < target_date].copy()
+            test  = data[test_mask].copy()
+            log.info(
+                "Round-level split: train=%d rows (before %s)  |  test=%d rows (year=%d round=%d)",
+                len(train), target_date.date(), len(test), test_year, test_round,
+            )
+        else:
+            # Target round not yet in cache — train on all prior rounds, no test set
+            in_year = (data["Year"] == test_year) & (data["RoundNumber"] < test_round)
+            train = data[(data["Year"] < test_year) | in_year].copy()
+            test  = pd.DataFrame()
+            log.info(
+                "Round %d/%d not in cache yet — train=%d rows (all prior data), no test set",
+                test_year, test_round, len(train),
+            )
+    else:
+        train = data[data["Year"] <  test_year].copy()
+        test  = data[data["Year"] == test_year].copy()
+        log.info("Train: %d rows  |  Test: %d rows", len(train), len(test))
 
-    log.info("Train: %d rows  |  Test: %d rows", len(train), len(test))
     return train, test
