@@ -86,6 +86,7 @@ export default function PredictPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showFeatures, setShowFeatures] = useState(false)
+  const [progressMessages, setProgressMessages] = useState([])
 
   useEffect(() => {
     getYears().then((y) => {
@@ -123,9 +124,13 @@ export default function PredictPage() {
     setLoading(true)
     setError(null)
     setResult(null)
+    setProgressMessages([])
     try {
       const data = selectedYear >= 2026
-        ? await predictLiveStream(selectedYear, selectedEvent, msg => console.log('[F1 Predictor]', msg))
+        ? await predictLiveStream(selectedYear, selectedEvent, msg => {
+            console.log('[F1 Predictor]', msg)
+            setProgressMessages(prev => [...prev, msg])
+          })
         : await predict(selectedYear, selectedEvent)
       setResult(data)
     } catch (e) {
@@ -190,6 +195,30 @@ export default function PredictPage() {
       {error && (
         <div className="bg-red-950 border border-red-800 text-red-300 rounded px-4 py-3 text-sm mb-6">
           {error}
+        </div>
+      )}
+
+      {/* Live prediction progress */}
+      {loading && progressMessages.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-700 rounded px-4 py-3 text-sm mb-6 font-mono">
+          {progressMessages.map((msg, i) => (
+            <div
+              key={i}
+              className={`flex items-center gap-2 py-0.5 ${i === progressMessages.length - 1 ? 'text-white' : 'text-zinc-500'}`}
+            >
+              <span className="text-zinc-600 select-none">›</span>
+              {i === progressMessages.length - 1 ? (
+                <span className="flex items-center gap-2">
+                  {msg}
+                  <span className="inline-flex gap-0.5">
+                    <span className="w-1 h-1 bg-zinc-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1 h-1 bg-zinc-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                    <span className="w-1 h-1 bg-zinc-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                  </span>
+                </span>
+              ) : msg}
+            </div>
+          ))}
         </div>
       )}
 
