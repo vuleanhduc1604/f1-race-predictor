@@ -72,7 +72,7 @@ export default function FeatureImportancePage() {
 
       {!loading && !error && data.length > 0 && (
         <div className="bg-zinc-800/40 rounded-lg border border-zinc-800 p-4">
-          <ResponsiveContainer width="100%" height={Math.max(300, data.length * 24)}>
+          <ResponsiveContainer width="100%" height={Math.max(300, data.length * 32)}>
             <BarChart
               data={data}
               layout="vertical"
@@ -90,6 +90,7 @@ export default function FeatureImportancePage() {
                 type="category"
                 dataKey="feature"
                 width={210}
+                interval={0}
                 tick={{ fill: '#d4d4d8', fontSize: 11 }}
                 axisLine={false}
                 tickLine={false}
