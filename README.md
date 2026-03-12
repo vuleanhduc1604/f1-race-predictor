@@ -1,6 +1,6 @@
 # F1 Race Predictor
 
-Predicts Formula 1 race finishing positions using LightGBM trained on FastF1 telemetry and timing data from the 2018–2025 seasons.
+Predicts Formula 1 race finishing positions using LightGBM trained on FastF1 telemetry and timing data from the 2018–2026 seasons.
 
 **Live demo:** [f1-race-predictor-bay.vercel.app](https://f1-race-predictor-bay.vercel.app/)
 
@@ -16,6 +16,9 @@ The default model is an **LGBMRegressor** (matching the original notebook baseli
 - Within-race relative features that normalise each driver's stats against the rest of the field
 - Leave-one-year-out cross-validation for temporally honest hyperparameter tuning (Optuna)
 - Two interchangeable model backends: `regressor` and `ranker`
+- **Post-race pipeline** that appends new race results and retrains a round-specific model after each race
+- **Round-level train/test split** so the model for any race is trained on all prior races only
+- **Live SSE streaming** with a step-by-step progress indicator in the UI for 2026+ predictions
 
 ---
 
@@ -30,7 +33,7 @@ Evaluated on the held-out **2025 season** (model trained on 2018–2024 at the t
 
 Both models predict finishing positions to within ~2 places on average. The regressor marginally outperforms the ranker on this dataset, which is why it is the default.
 
-> **Current model:** Retrained on the full 2018–2025 dataset. The 2026 season is the new live prediction target.
+> **Current model:** Retrained on the full 2018–2026 dataset. 2026 races not yet in training appear as live out-of-sample predictions.
 
 ---
 
@@ -42,7 +45,7 @@ A full-stack web interface is included: a **FastAPI** backend wrapping the ML sy
 
 ### Running locally
 
-**1. Install Python dependencies (if you haven't already):**
+**1. Install Python dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
@@ -63,17 +66,70 @@ npm run dev
 
 The UI will be available at `http://localhost:5173`.
 
-> **Note:** You must have a trained model at `models/ranker.pkl` before the API can serve predictions. Run `python scripts/train.py` first if you haven't already.
+> **Note:** You must have a trained model under `models/` before the API can serve predictions. Run `python scripts/train.py` first if you haven't already.
 
 ### API endpoints
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/years` | List available season years |
-| GET | `/events?year=2025` | List races for a season |
-| GET | `/predict?year=2025&event=Australian Grand Prix` | Predict a race |
+| GET | `/events?year=2026` | List races for a season |
+| GET | `/predict?year=2026&event=Australian Grand Prix` | Predict a race (historical) |
+| GET | `/predict-live?year=2026&event=Chinese Grand Prix` | Predict a race using live FastF1 data (SSE stream) |
 | GET | `/evaluate?year=2025` | Full-season evaluation metrics |
 | GET | `/feature-importance?top_n=25` | Model feature importances |
+
+---
+
+## Post-race pipeline
+
+After each race finishes, run `scripts/post_race.py` to:
+
+1. Append the completed race's results to `cache/raw_results_2018_2026.pkl`
+2. Delete derived caches so they rebuild from scratch on the next training run
+3. Train a round-specific model (e.g. `ranker_2026_R02.pkl`) on all races before the next round
+4. Save a JSON metadata sidecar tracking the training cutoff
+
+```bash
+# After Australian GP (Round 1) — trains ranker_2026_R02.pkl for Chinese GP
+python scripts/post_race.py --year 2026 --completed-round 1
+
+# Or reference by name
+python scripts/post_race.py --year 2026 --completed-event "Australian Grand Prix"
+```
+
+| Flag | Description |
+|---|---|
+| `--year` | Season year (required) |
+| `--completed-round` | Round number just finished (mutually exclusive with `--completed-event`) |
+| `--completed-event` | Event name just finished (mutually exclusive with `--completed-round`) |
+| `--next-round` | Override which round to target (default: completed + 1) |
+| `--mode` | `regressor` or `ranker` (default: `regressor`) |
+| `--skip-cache-refresh` | Skip fetching results, only retrain |
+| `--force` | Overwrite existing model for this round |
+
+### Model naming convention
+
+| File | Trained on | Used for |
+|---|---|---|
+| `ranker_2026.pkl` | 2018–2025 | Baseline; used when no round-specific model exists |
+| `ranker_2026_R02.pkl` | 2018–2025 + Australian GP 2026 | Chinese GP 2026 (Round 2) |
+| `ranker_2026_R03.pkl` | 2018–2025 + Rounds 1–2 | Round 3 onward |
+
+### Model resolution
+
+When predicting a race, `_load_ranker` resolves the model in this order:
+
+1. `ranker_{year}_R{round:02d}.pkl` — round-specific (post-race pipeline)
+2. `ranker_{year}.pkl` — year-specific baseline
+3. `ranker_2026.pkl` — general 2026 fallback
+4. `ranker.pkl` — last-resort fallback
+
+### Training metadata
+
+Each model has a JSON sidecar (e.g. `ranker_2026_R02_meta.json`) that records the training cutoff. The frontend banner reads this to show:
+
+> *Model trained through **Australian Grand Prix 2026** (Round 1).*
 
 ---
 
@@ -81,27 +137,34 @@ The UI will be available at `http://localhost:5173`.
 
 ```
 f1-race-predictor/
-├── cache/                          # FastF1 cache + pickled feature files
-│   ├── practice_features.pkl       # Committed – extracted FP features
-│   ├── qualifying_results.pkl      # Committed – Q1/Q2/Q3 times
-│   └── data_with_all_features.pkl  # Committed – merged training dataset
-├── models/                         # Saved .pkl model files (git-ignored)
-├── notebooks/exploratory/          # Original development notebook
+├── cache/
+│   ├── raw_results_2018_2026.pkl   # Source of truth — all race results
+│   └── data_with_all_features.pkl  # Merged feature dataset (used by live predictor)
+├── models/
+│   ├── ranker_2026.pkl             # Baseline model (2018–2025)
+│   ├── ranker_2026_R02.pkl         # Round-specific model (example)
+│   └── ranker_2026_R02_meta.json   # Training metadata sidecar
 ├── scripts/
 │   ├── train.py                    # Train and save a model
+│   ├── post_race.py                # Post-race pipeline: update cache + retrain
 │   ├── predict.py                  # Generate predictions for a race / season
 │   └── evaluate.py                 # Evaluation report + plots
+├── api/
+│   ├── main.py                     # FastAPI app
+│   ├── predictor.py                # Prediction logic, model loading
+│   └── live_predictor.py           # Live SSE prediction stream (2026+)
 ├── src/
 │   ├── config.py                   # All constants, paths, hyperparameter defaults
 │   ├── data/
 │   │   ├── extractors.py           # practiceExtractor, qualifyingExtractor
 │   │   ├── features.py             # FeatureExtractor, FeatureEngineer, helpers
-│   │   └── loaders.py              # Cache-aware data loading + build_training_dataset()
+│   │   └── loaders.py              # Cache-aware loading + build_training_dataset()
 │   ├── models/
 │   │   ├── ranker.py               # RaceRanker (regressor / ranker modes)
 │   │   └── tuning.py               # Optuna HPO with season-based CV
 │   └── utils/
 │       └── helpers.py              # is_dnf, get_drop_columns, get_race_groups, …
+├── frontend/                       # React + Vite frontend
 ├── requirements.txt
 └── .gitignore
 ```
@@ -124,10 +187,10 @@ pip install -r requirements.txt
 
 ### Using the committed feature caches (fastest)
 
-The three processed feature caches are committed to the repo, so you can train immediately without fetching any data from FastF1.
+Two cache files are committed to the repo so you can train immediately without fetching anything from FastF1.
 
 ```bash
-# Train with default regressor params (no Optuna, uses committed caches)
+# Train with default regressor params (no Optuna)
 python scripts/train.py --skip-tuning
 
 # Evaluate on the 2026 hold-out season
@@ -139,13 +202,11 @@ python scripts/predict.py --year 2026 --event "Australian Grand Prix"
 
 ### Full rebuild from FastF1
 
-If you want to extend to newer races or re-extract everything from scratch, remove `--skip-tuning` and optionally pass `--force-rebuild`.
-
-> **Note:** A full rebuild fetches data from the FastF1 API and may take 20–60 minutes depending on cache state and connection speed. Run once with `fastf1.Cache.offline_mode = False` (edit `scripts/train.py` line 70) to populate the local cache, then restore `True` for offline use.
-
 ```bash
 python scripts/train.py --force-rebuild --n-trials 50
 ```
+
+> **Note:** A full rebuild fetches data from the FastF1 API and may take 20–60 minutes depending on cache state and connection speed.
 
 ---
 
@@ -157,7 +218,7 @@ python scripts/train.py --force-rebuild --n-trials 50
 # Default: LGBMRegressor, 50 Optuna trials
 python scripts/train.py
 
-# Skip Optuna — use the hardcoded default params from config.py
+# Skip Optuna — use hardcoded default params from config.py
 python scripts/train.py --skip-tuning
 
 # Switch to LambdaMART ranker
@@ -165,9 +226,6 @@ python scripts/train.py --mode ranker --model-name ranker_lambdarank.pkl
 
 # Save to a custom filename
 python scripts/train.py --model-name my_model.pkl
-
-# All options
-python scripts/train.py --help
 ```
 
 | Flag | Default | Description |
@@ -177,7 +235,7 @@ python scripts/train.py --help
 | `--skip-tuning` | off | Use hardcoded default params |
 | `--force-rebuild` | off | Re-extract all features, ignore caches |
 | `--test-year` | `2026` | Hold-out season for evaluation |
-| `--model-name` | `ranker.pkl` | Output filename under `models/` |
+| `--model-name` | `ranker_2026.pkl` | Output filename under `models/` |
 
 ### Predict
 
@@ -195,19 +253,12 @@ python scripts/predict.py --model models/ranker_lambdarank.pkl --year 2026
 ### Evaluate
 
 ```bash
-# Default: evaluates models/ranker.pkl on the 2026 season
+# Default: evaluates on the 2026 season
 python scripts/evaluate.py
 
 # Save plots to models/
 python scripts/evaluate.py --save-plots
 ```
-
-Outputs:
-- Overall MAE and position-error distribution
-- Winner / podium classification report
-- Per-race MAE table
-- Feature importance plot
-- Per-race MAE bar chart
 
 ---
 
@@ -376,27 +427,20 @@ To switch back to `ranker` permanently, change `DEFAULT_MODE = "ranker"` in `src
 | Within-race relative features | `relative_driver_form_5`, etc. | Absolute form numbers are ambiguous without knowing who else is in the race |
 | High-missing practice features | Dropped (>80% NaN) | Sprint-format weeks have no FP2/FP3; keeping them adds mostly noise |
 | Leakage prevention | All features use `EventDate < current` | Prevents any future race data from influencing features for a given race |
+| Round-level split | `EventDate < target_round_date` | Ensures the model for each race is trained only on races that happened before it |
 
 ---
 
 ## Cache files
 
-| File | Size | Committed | Description |
-|---|---|---|---|
-| `cache/20XX/` | ~1–3 GB each | No | FastF1 per-session raw data |
-| `cache/fastf1_http_cache.sqlite` | ~4.3 GB | No | FastF1 HTTP response cache |
-| `cache/raw_results_2018_2025.pkl` | ~1.1 MB | No | Raw race results table (regenerated automatically) |
-| `cache/practice_features.pkl` | ~1.3 MB | **Yes** | Extracted practice features per race |
-| `cache/qualifying_results.pkl` | ~152 KB | **Yes** | Q1/Q2/Q3 times per driver per race |
-| `cache/data_with_all_features.pkl` | ~3.4 MB | **Yes** | Fully merged training dataset |
+Only two cache files need to be present:
 
-To update the committed caches after adding new races, run:
+| File | Description |
+|---|---|
+| `cache/raw_results_2018_2026.pkl` | Source of truth — all race results; updated by `post_race.py` after each race |
+| `cache/data_with_all_features.pkl` | Fully merged feature dataset; used by the live predictor for fast history lookups |
 
-```bash
-python scripts/train.py --force-rebuild --skip-tuning
-```
-
-then commit the updated pkl files.
+All other derived caches (`practice_features.pkl`, `qualifying_results.pkl`) are intermediate build artefacts and are deleted by `post_race.py` after each update. They are rebuilt automatically from local FastF1 session files on the next training run.
 
 ---
 
