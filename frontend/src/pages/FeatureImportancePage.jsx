@@ -34,9 +34,6 @@ export default function FeatureImportancePage() {
       .finally(() => setLoading(false))
   }, [topN])
 
-  // Recharts needs data in ascending order for horizontal bar layout
-  const chartData = [...data].reverse()
-
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <h1 className="text-2xl font-bold text-white mb-1">Feature Importance</h1>
@@ -75,9 +72,9 @@ export default function FeatureImportancePage() {
 
       {!loading && !error && data.length > 0 && (
         <div className="bg-zinc-800/40 rounded-lg border border-zinc-800 p-4">
-          <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 24)}>
+          <ResponsiveContainer width="100%" height={Math.max(300, data.length * 24)}>
             <BarChart
-              data={chartData}
+              data={data}
               layout="vertical"
               margin={{ top: 4, right: 20, left: 20, bottom: 4 }}
             >

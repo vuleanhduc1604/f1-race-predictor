@@ -16,7 +16,6 @@ export default function Navbar() {
           <span className="text-white font-semibold text-sm">Race Predictor</span>
         </div>
         <NavLink to="/" className={linkClass} end>Predict</NavLink>
-        <NavLink to="/evaluate" className={linkClass}>Evaluate</NavLink>
         <NavLink to="/features" className={linkClass}>Feature Importance</NavLink>
       </div>
     </nav>
