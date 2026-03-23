@@ -7,9 +7,10 @@ export const getYears = () => client.get('/years').then(r => r.data.years)
 export const getEvents = (year) =>
   client.get('/events', { params: { year } }).then(r => r.data.events)
 
-export const predictLiveStream = (year, event, onProgress) =>
+export const predictLiveStream = (year, event, onProgress, dnfDrivers = []) =>
   new Promise((resolve, reject) => {
-    const url = `/api/predict?year=${year}&event=${encodeURIComponent(event)}`
+    let url = `/api/predict?year=${year}&event=${encodeURIComponent(event)}`
+    if (dnfDrivers.length) url += `&dnf_drivers=${encodeURIComponent(dnfDrivers.join(','))}`
     const es = new EventSource(url)
     es.addEventListener('progress', e => onProgress(JSON.parse(e.data).message))
     es.addEventListener('result', e => { es.close(); resolve(JSON.parse(e.data)) })

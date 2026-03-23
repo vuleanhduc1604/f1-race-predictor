@@ -68,10 +68,12 @@ def events(year: int = Query(..., description="Season year, e.g. 2025")):
 def predict(
     year: int = Query(..., description="Season year"),
     event: str = Query(..., description="Event name, e.g. 'Australian Grand Prix'"),
+    dnf_drivers: Optional[str] = Query(None, description="Comma-separated driver abbreviations to mark as DNF (e.g. 'VER,HAM')"),
 ):
     """Stream prediction progress as Server-Sent Events (SSE) for any year."""
+    dnf_list = [d.strip().upper() for d in dnf_drivers.split(",") if d.strip()] if dnf_drivers else []
     return StreamingResponse(
-        run_live_prediction_stream(year, event),
+        run_live_prediction_stream(year, event, dnf_list),
         media_type="text/event-stream",
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
     )

@@ -434,9 +434,14 @@ def _add_championship_ranks(df: pd.DataFrame) -> pd.DataFrame:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def run_live_prediction_stream(year: int, event: str):
+def run_live_prediction_stream(year: int, event: str, dnf_drivers: list[str] | None = None):
     """
     Generator that yields SSE-formatted strings at each prediction step.
+
+    Parameters
+    ----------
+    dnf_drivers : list of driver abbreviations (uppercase) known to have DNF'd.
+        These drivers will be ranked last and marked with status="DNF".
 
     Yields:
         ``event: progress\\ndata: {"message": "..."}\\n\\n``  for each step
@@ -554,6 +559,24 @@ def run_live_prediction_stream(year: int, event: str):
 
         yield _emit(f"Predictions complete for {len(target_df)} drivers.")
 
+        # ── 7.1. Apply known DNF overrides ─────────────────────────────────
+        dnf_set = {d.upper() for d in (dnf_drivers or [])}
+        if dnf_set:
+            is_dnf_flag = target_df["Abbreviation"].str.upper().isin(dnf_set)
+            matched = target_df.loc[is_dnf_flag, "Abbreviation"].tolist()
+            if matched:
+                yield _emit(f"Applying DNF overrides for: {', '.join(matched)}.")
+            non_dnf = target_df[~is_dnf_flag].sort_values("predicted_position").copy()
+            dnf_df  = target_df[is_dnf_flag].copy()
+            non_dnf["predicted_position"] = range(1, len(non_dnf) + 1)
+            non_dnf["_dnf_override"] = False
+            dnf_start = len(non_dnf) + 1
+            dnf_df["predicted_position"] = range(dnf_start, dnf_start + len(dnf_df))
+            dnf_df["_dnf_override"] = True
+            target_df = pd.concat([non_dnf, dnf_df]).reset_index(drop=True)
+        else:
+            target_df["_dnf_override"] = False
+
         # ── 7.5. Fetch actual race results if the race has finished ────────
         has_actuals = False
         median_error = None
@@ -609,6 +632,7 @@ def run_live_prediction_stream(year: int, event: str):
                 "predicted_position": int(row["predicted_position"]),
                 "actual_position":    int(row["actual_position"]) if has_actuals and pd.notna(row.get("actual_position")) else None,
                 "error":              int(row["error"]) if has_actuals and pd.notna(row.get("error")) else None,
+                "status":             "DNF" if row.get("_dnf_override") else None,
                 "features":           features,
             })
 
@@ -632,12 +656,12 @@ def run_live_prediction_stream(year: int, event: str):
         yield f"event: fail\ndata: {_json.dumps({'detail': str(exc)})}\n\n"
 
 
-def run_live_prediction(year: int, event: str) -> dict:
+def run_live_prediction(year: int, event: str, dnf_drivers: list[str] | None = None) -> dict:
     """
     Generate pre-race predictions for *event* in *year* using live session data.
     Returns the same dict shape as ``run_prediction``, with ``"source": "live"``.
     """
-    for chunk in run_live_prediction_stream(year, event):
+    for chunk in run_live_prediction_stream(year, event, dnf_drivers):
         if chunk.startswith("event: result\n"):
             return _json.loads(chunk.split("\ndata: ", 1)[1].strip())
         if chunk.startswith("event: fail\n"):

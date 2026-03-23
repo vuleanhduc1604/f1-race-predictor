@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getYears, getEvents, predictLiveStream } from '../api'
 
 const positionBadge = (pos) => {
@@ -75,6 +75,79 @@ function FeaturesTable({ result }) {
   )
 }
 
+const DNF_STORAGE_KEY = 'f1_dnf_drivers'
+
+function loadStoredDnfDrivers() {
+  try { return JSON.parse(localStorage.getItem(DNF_STORAGE_KEY) || '[]') } catch { return [] }
+}
+
+function DnfSelect({ drivers, dnfDrivers, onAdd, onRemove }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const toggle = (abbr) => {
+    if (dnfDrivers.includes(abbr)) onRemove(abbr)
+    else onAdd(abbr)
+  }
+
+  const disabled = !drivers.length
+  const label = dnfDrivers.length ? dnfDrivers.join(', ') : 'None'
+
+  return (
+    <div className="flex flex-col gap-1" ref={ref}>
+      <label className="text-xs text-zinc-400 font-medium uppercase tracking-wide">
+        Known DNFs
+      </label>
+      <div className="relative">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center justify-between gap-2 bg-zinc-800 border border-zinc-700 text-sm rounded px-3 py-2 min-w-48 w-48 focus:outline-none focus:border-red-500 disabled:opacity-40 disabled:cursor-not-allowed hover:border-zinc-500 transition-colors"
+        >
+          <span className={`truncate ${dnfDrivers.length ? 'text-red-300 font-mono' : 'text-zinc-500'}`}>
+            {disabled ? 'Run prediction first' : label}
+          </span>
+          <svg className="w-4 h-4 text-zinc-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {open && !disabled && (
+          <div className="absolute top-full left-0 mt-1 w-56 bg-zinc-800 border border-zinc-700 rounded shadow-xl z-50 max-h-64 overflow-y-auto">
+            {drivers.map((d) => {
+              const checked = dnfDrivers.includes(d.abbreviation)
+              return (
+                <button
+                  key={d.abbreviation}
+                  type="button"
+                  onClick={() => toggle(d.abbreviation)}
+                  className={`w-full flex items-center gap-3 px-3 py-2 text-sm text-left hover:bg-zinc-700 transition-colors ${checked ? 'text-red-300' : 'text-white'}`}
+                >
+                  <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-red-600 border-red-500' : 'border-zinc-600'}`}>
+                    {checked && (
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="font-mono font-semibold">{d.abbreviation}</span>
+                  {d.full_name && <span className="text-zinc-400 text-xs truncate">{d.full_name}</span>}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function PredictPage() {
   useEffect(() => { document.title = 'Predict' }, [])
 
@@ -87,6 +160,7 @@ export default function PredictPage() {
   const [error, setError] = useState(null)
   const [showFeatures, setShowFeatures] = useState(false)
   const [progressMessages, setProgressMessages] = useState([])
+  const [dnfDrivers, setDnfDrivers] = useState(loadStoredDnfDrivers)
 
   useEffect(() => {
     getYears().then((y) => {
@@ -96,12 +170,18 @@ export default function PredictPage() {
     })
   }, [])
 
+  const clearDnf = () => {
+    setDnfDrivers([])
+    localStorage.removeItem(DNF_STORAGE_KEY)
+  }
+
   useEffect(() => {
     if (!selectedYear) return
     setEvents([])
     setSelectedEvent('')
     setError(null)
     setResult(null)
+    clearDnf()
     getEvents(selectedYear)
       .then((e) => {
         setEvents(e)
@@ -119,6 +199,24 @@ export default function PredictPage() {
       })
   }, [selectedYear])
 
+  useEffect(() => {
+    if (!selectedEvent) return
+    setResult(null)
+    clearDnf()
+  }, [selectedEvent])
+
+  const addDnf = (abbr) => {
+    const updated = [...dnfDrivers, abbr]
+    setDnfDrivers(updated)
+    localStorage.setItem(DNF_STORAGE_KEY, JSON.stringify(updated))
+  }
+
+  const removeDnf = (abbr) => {
+    const updated = dnfDrivers.filter((d) => d !== abbr)
+    setDnfDrivers(updated)
+    localStorage.setItem(DNF_STORAGE_KEY, JSON.stringify(updated))
+  }
+
   const handlePredict = async () => {
     if (!selectedYear || !selectedEvent) return
     setLoading(true)
@@ -129,7 +227,7 @@ export default function PredictPage() {
       const data = await predictLiveStream(selectedYear, selectedEvent, msg => {
         console.log('[F1 Predictor]', msg)
         setProgressMessages(prev => [...prev, msg])
-      })
+      }, dnfDrivers)
       setResult(data)
     } catch (e) {
       setError(e.response?.data?.detail || e.message || 'Prediction failed.')
@@ -179,6 +277,13 @@ export default function PredictPage() {
             ))}
           </select>
         </div>
+
+        <DnfSelect
+          drivers={result?.drivers?.map((d) => ({ abbreviation: d.abbreviation, full_name: d.full_name })) ?? []}
+          dnfDrivers={dnfDrivers}
+          onAdd={addDnf}
+          onRemove={removeDnf}
+        />
 
         <button
           onClick={handlePredict}
@@ -292,23 +397,31 @@ export default function PredictPage() {
                 {result.drivers.map((d, i) => (
                   <tr
                     key={d.abbreviation}
-                    className={`border-t border-zinc-800 ${
-                      i % 2 === 0 ? 'bg-zinc-900' : 'bg-zinc-900/50'
-                    } hover:bg-zinc-800/60 transition-colors`}
+                    className={`border-t border-zinc-800 transition-colors ${
+                      d.status === 'DNF'
+                        ? 'bg-red-950/20 hover:bg-red-950/30 opacity-60'
+                        : i % 2 === 0 ? 'bg-zinc-900 hover:bg-zinc-800/60' : 'bg-zinc-900/50 hover:bg-zinc-800/60'
+                    }`}
                   >
                     <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center justify-center w-7 h-7 rounded text-xs font-bold ${positionBadge(
-                          d.predicted_position
-                        )}`}
-                      >
-                        {d.predicted_position}
-                      </span>
+                      {d.status === 'DNF' ? (
+                        <span className="inline-flex items-center justify-center px-2 h-7 rounded text-xs font-bold bg-red-900 border border-red-700 text-red-300">
+                          DNF
+                        </span>
+                      ) : (
+                        <span
+                          className={`inline-flex items-center justify-center w-7 h-7 rounded text-xs font-bold ${positionBadge(
+                            d.predicted_position
+                          )}`}
+                        >
+                          {d.predicted_position}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-mono font-semibold text-white">{d.abbreviation}</span>
+                      <span className={`font-mono font-semibold ${d.status === 'DNF' ? 'text-zinc-500' : 'text-white'}`}>{d.abbreviation}</span>
                       {d.full_name && (
-                        <span className="text-zinc-400 ml-2 text-xs">{d.full_name}</span>
+                        <span className="text-zinc-500 ml-2 text-xs">{d.full_name}</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-zinc-300 text-xs">{d.team || '—'}</td>
